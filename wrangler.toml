@@ -1,10 +1,14 @@
 name = "throughline"
-compatibility_date = "2026-05-28"
-pages_build_output_dir = "public"
+main = "src/index.js"
+compatibility_date = "2026-03-29"
 
-# KV namespace — single JSON blob lives at key "throughline:state".
-# Fill the id after running:  wrangler kv namespace create THROUGHLINE
-# The preview_id is auto-created by `wrangler pages dev` if omitted.
+# Workers + Assets: the SPA in public/ is served directly by the
+# runtime; the Worker only handles /api/state requests.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Single JSON blob lives at KV key "throughline:state".
 [[kv_namespaces]]
 binding = "THROUGHLINE"
 id = "fcf9208b03f54eaabd6524f5a76c7f03"

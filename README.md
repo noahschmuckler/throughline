@@ -26,29 +26,27 @@ sync — that's a future sibling project, not this repo.
 ```sh
 npm install
 npm run dev
-# open http://127.0.0.1:8788
+# open the URL wrangler prints (usually http://127.0.0.1:8787)
 ```
 
-`wrangler pages dev` provisions a local KV emulator automatically — no
-account setup needed to run locally.
+`wrangler dev` runs the Worker + Assets locally with a KV emulator.
 
 ## Deploy
 
-One-time setup:
+The Cloudflare project is connected to this repo on GitHub; every push
+to `main` deploys automatically. If you want to deploy manually:
 
 ```sh
-npx wrangler login                                  # authenticate
-npx wrangler kv namespace create THROUGHLINE        # copy the printed id
-# paste the id into wrangler.toml under [[kv_namespaces]]
-```
-
-Then:
-
-```sh
+npx wrangler login    # one-time
 npm run deploy
 ```
 
-Cloudflare prints the live URL.
+A new KV namespace can be created and bound with:
+
+```sh
+npx wrangler kv namespace create THROUGHLINE
+# paste the printed id into wrangler.toml under [[kv_namespaces]]
+```
 
 ## Data shape
 
