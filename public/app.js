@@ -773,38 +773,64 @@ function renderAtomItem(atom) {
 function wireAtomSections(entryId) {
   const drawer = document.getElementById('drawer');
   drawer.querySelectorAll('.atom-item').forEach(item => wireAtomItem(item, entryId));
+  // Add-row click handling is delegated globally; see setupDrawerDelegation().
+}
 
-  drawer.querySelectorAll('.atom-add-row').forEach(row => {
-    const kind = row.dataset.addKind;
-    const input = row.querySelector('[data-add-body]');
-    const submit = row.querySelector('[data-add-submit]');
-    const add = () => {
-      const body = input.value.trim();
-      if (!body) return;
-      const newAtom = {
-        id: uid(),
-        entry_id: entryId,
-        kind,
-        body,
-        tags: [],
-        created_at: nowIso(),
-        updated_at: nowIso(),
-      };
-      if (kind === 'action') {
-        newAtom.assigned_to = '';
-        newAtom.due_date = '';
-      } else if (kind === 'outcome') {
-        newAtom.parent_atom_id = null;
-      }
-      state.atoms.push(newAtom);
-      scheduleSave();
-      input.value = '';
-      renderDrawerInner(entryId);
-      const newRow = document.querySelector(`[data-atom-id="${newAtom.id}"]`);
-      if (newRow) newRow.querySelector('[data-atom-body]')?.focus();
-    };
-    input.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } };
-    submit.onclick = add;
+function handleAddAtom(row) {
+  const entryId = currentDrawerEntryId;
+  if (!entryId) return;
+  const kind = row.dataset.addKind;
+  const input = row.querySelector('[data-add-body]');
+  const body = input?.value.trim();
+  if (!body) { input?.focus(); return; }
+  const newAtom = {
+    id: uid(),
+    entry_id: entryId,
+    kind,
+    body,
+    tags: [],
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  };
+  if (kind === 'action') {
+    newAtom.assigned_to = '';
+    newAtom.due_date = '';
+  } else if (kind === 'outcome') {
+    newAtom.parent_atom_id = null;
+  }
+  state.atoms.push(newAtom);
+  scheduleSave();
+  if (input) input.value = '';
+  renderDrawerInner(entryId);
+  const newRow = document.querySelector(`[data-atom-id="${newAtom.id}"]`);
+  if (newRow) newRow.querySelector('[data-atom-body]')?.focus();
+}
+
+// Delegated handlers on the drawer — attached once at boot. Survives any
+// number of inner re-renders without needing to re-wire per-element.
+let _drawerDelegated = false;
+function setupDrawerDelegation() {
+  if (_drawerDelegated) return;
+  const drawer = document.getElementById('drawer');
+  if (!drawer) return;
+  _drawerDelegated = true;
+
+  drawer.addEventListener('click', (ev) => {
+    const addBtn = ev.target.closest('[data-add-submit]');
+    if (addBtn) {
+      ev.preventDefault();
+      const row = addBtn.closest('.atom-add-row');
+      if (row) handleAddAtom(row);
+    }
+  });
+
+  drawer.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    const input = ev.target.closest('[data-add-body]');
+    if (!input) return;
+    ev.preventDefault();
+    const row = input.closest('.atom-add-row');
+    if (row) handleAddAtom(row);
   });
 }
 
@@ -1091,6 +1117,8 @@ function openCloseActionModal(action) {
 // ---------- Boot ---------------------------------------------------
 
 (async function boot() {
+  console.log('[throughline] client v0.3 — delegated add handlers');
+  setupDrawerDelegation();
   await loadState();
   render();
 })();
