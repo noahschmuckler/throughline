@@ -1,0 +1,13 @@
+{
+  "name": "throughline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared dyad accountability tool — projects, dated entries, observations / decisions / actions / outcomes. Cloudflare Pages demo; orange-device production form to follow.",
+  "scripts": {
+    "dev": "wrangler pages dev public --kv THROUGHLINE",
+    "deploy": "wrangler pages deploy public --project-name throughline"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

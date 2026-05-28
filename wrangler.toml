@@ -1,0 +1,10 @@
+name = "throughline"
+compatibility_date = "2026-05-28"
+pages_build_output_dir = "public"
+
+# KV namespace — single JSON blob lives at key "throughline:state".
+# Fill the id after running:  wrangler kv namespace create THROUGHLINE
+# The preview_id is auto-created by `wrangler pages dev` if omitted.
+[[kv_namespaces]]
+binding = "THROUGHLINE"
+id = ""

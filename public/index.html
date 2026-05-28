@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Throughline</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a href="#/" class="brand" aria-label="Throughline home">
+        <span class="brand-mark" aria-hidden="true">⎯</span>
+        <span class="brand-word">Throughline</span>
+      </a>
+      <div class="topbar-status" id="status" aria-live="polite"></div>
+    </header>
+
+    <main id="main"></main>
+
+    <!-- Drawer overlay (entry detail / composer). -->
+    <div class="drawer-shroud" id="drawer-shroud" hidden></div>
+    <aside
+      class="drawer"
+      id="drawer"
+      aria-hidden="true"
+      aria-label="Entry detail"
+      hidden
+    ></aside>
+
+    <!-- Modal overlay (new project / reference file, close-action confirm). -->
+    <div class="modal-shroud" id="modal-shroud" hidden>
+      <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+    </div>
+
+    <template id="tpl-home">
+      <section class="home">
+        <div class="home-head">
+          <h1 class="display">What are we working on?</h1>
+          <div class="home-actions">
+            <button class="btn primary" data-act="new-project">
+              New project
+            </button>
+            <button class="btn" data-act="new-reference-file">
+              New reference file
+            </button>
+          </div>
+        </div>
+        <div class="home-filters">
+          <input
+            type="search"
+            id="home-search"
+            placeholder="Search projects, reference files, tags…"
+            class="search-input"
+          />
+          <div class="tag-chips" id="home-tag-chips"></div>
+        </div>
+        <div class="container-list" id="container-list"></div>
+        <h2 class="section-rule">Recent activity</h2>
+        <div class="recent-list" id="recent-list"></div>
+      </section>
+    </template>
+
+    <template id="tpl-project">
+      <section class="project">
+        <div class="project-head">
+          <div class="project-head-meta">
+            <a href="#/" class="back-link">← All projects</a>
+            <span class="type-badge" id="project-type-badge"></span>
+          </div>
+          <h1 class="display" id="project-title"></h1>
+          <p class="project-tagline" id="project-tagline"></p>
+          <div class="project-tags" id="project-tags"></div>
+          <details class="project-summary" id="project-summary-details" hidden>
+            <summary>Summary</summary>
+            <div class="prose" id="project-summary-body"></div>
+          </details>
+          <div class="project-head-actions">
+            <button class="btn ghost" data-act="edit-project">Edit</button>
+          </div>
+        </div>
+
+        <div class="project-body">
+          <div class="entry-pane">
+            <div class="entry-pane-head">
+              <h2>Entries</h2>
+              <button class="btn primary" data-act="new-entry">
+                New entry
+              </button>
+            </div>
+            <div class="entry-stack" id="entry-stack"></div>
+          </div>
+
+          <aside class="action-rail">
+            <div class="rail-head">
+              <h2>Open actions</h2>
+              <div class="rail-counters" id="rail-counters"></div>
+            </div>
+            <div class="rail-list" id="rail-list"></div>
+          </aside>
+        </div>
+      </section>
+    </template>
+
+    <template id="tpl-empty-home">
+      <div class="empty">
+        <p>No projects or reference files yet.</p>
+        <p class="muted">
+          Start by adding the first one. A <em>project</em> has a goal; a
+          <em>reference file</em> has a purpose.
+        </p>
+      </div>
+    </template>
+
+    <template id="tpl-empty-rail">
+      <div class="empty muted small">
+        Nothing open here yet. Add an action inside an entry and it will land
+        here.
+      </div>
+    </template>
+
+    <template id="tpl-empty-entries">
+      <div class="empty muted">
+        No entries yet. Click <strong>New entry</strong> above to record a
+        meeting, an email, or a freetext note.
+      </div>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
