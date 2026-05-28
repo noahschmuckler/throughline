@@ -931,23 +931,24 @@ label.field > .label {
 
 .atom-add-row {
   display: grid;
-  grid-template-columns: 4px 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
+  align-items: center;
   background: transparent;
   border: 1px dashed var(--card-edge);
   border-radius: var(--radius-sm);
-  padding: 8px 10px 8px 0;
+  padding: 8px 12px;
 }
 .atom-add-row.o { border-left: 3px solid var(--o-tone); }
 .atom-add-row.d { border-left: 3px solid var(--d-tone); }
 .atom-add-row.a { border-left: 3px solid var(--a-tone); }
 .atom-add-row.u { border-left: 3px solid var(--u-tone); }
-.atom-add-row .rail { display: none; }
 .atom-add-row input[type="text"] {
   border: none;
   background: transparent;
   padding: 4px 0;
   font-size: 0.92rem;
+  width: 100%;
 }
 .atom-add-row input:focus { box-shadow: none; }
 

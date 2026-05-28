@@ -725,9 +725,8 @@ function renderAtomSection(kind, label, glyph, glyphCls, entryId) {
         ${atoms.map(renderAtomItem).join('')}
       </div>
       <div class="atom-add-row ${glyphCls}" data-add-kind="${kind}">
-        <div class="rail"></div>
         <input type="text" placeholder="Add a ${singular(label).toLowerCase()}…" data-add-body />
-        <button class="btn tiny" data-add-submit>Add</button>
+        <button type="button" class="btn tiny" data-add-submit>Add</button>
       </div>
     </section>
   `;
