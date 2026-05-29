@@ -133,6 +133,38 @@ function tmpl(id) {
   return document.getElementById(id).content.cloneNode(true);
 }
 
+// ---------- Container type metadata --------------------------------
+
+const INBOX_ID = 'inbox';
+
+// Lookup so each new container type adds one row here, not N ternaries.
+const CONTAINER_LABELS = {
+  project:        { full: 'Project',        short: 'Project',   cls: 'project'   },
+  reference_file: { full: 'Reference File', short: 'Reference', cls: 'reference' },
+  inbox:          { full: 'Inbox',          short: 'Inbox',     cls: 'inbox'     },
+};
+const containerLabel   = (c, form = 'full') => CONTAINER_LABELS[c?.type]?.[form] || 'Project';
+const containerTypeCls = (c) => CONTAINER_LABELS[c?.type]?.cls || 'project';
+
+function getOrCreateInbox() {
+  let inbox = state.containers.find(c => c.id === INBOX_ID);
+  if (inbox) return inbox;
+  inbox = {
+    id: INBOX_ID,
+    type: 'inbox',
+    title: 'Inbox',
+    goal_or_purpose: '',
+    summary: '',
+    tags: [],
+    status: 'active',
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  };
+  state.containers.push(inbox);
+  scheduleSave();
+  return inbox;
+}
+
 // ---------- Derived selectors --------------------------------------
 
 const getContainer = (id) => state.containers.find(c => c.id === id);
@@ -221,6 +253,8 @@ function renderHome(main) {
     () => openNewContainerModal('project');
   main.querySelector('[data-act="new-reference-file"]').onclick =
     () => openNewContainerModal('reference_file');
+  main.querySelector('[data-act="new-adhoc"]').onclick =
+    () => openAdHocEntryDrawer();
 
   const search = main.querySelector('#home-search');
   search.value = homeFilters.search;
@@ -259,6 +293,7 @@ function filterContainers() {
   const q = homeFilters.search;
   const tags = homeFilters.activeTags;
   return state.containers.filter(c => {
+    if (c.type === 'inbox') return false; // Inbox lives in its own pinned row.
     if (c.status === 'archived') return false;
     if (tags.size && ![...tags].every(t => (c.tags || []).includes(t))) return false;
     if (q) {
@@ -275,6 +310,10 @@ function renderHomeBody() {
   const list = document.getElementById('container-list');
   if (!list) return;
   list.innerHTML = '';
+
+  // Pinned Inbox row at the top, always visible.
+  list.appendChild(renderInboxRow());
+
   const items = filterContainers().sort((a, b) => {
     const ta = lastTouchedOf(a.id) || a.created_at || '';
     const tb = lastTouchedOf(b.id) || b.created_at || '';
@@ -287,6 +326,50 @@ function renderHomeBody() {
   for (const c of items) list.appendChild(renderContainerRow(c));
 }
 
+function renderInboxRow() {
+  const row = document.createElement('div');
+  row.className = 'container-row inbox-row';
+  row.onclick = () => {
+    getOrCreateInbox();
+    location.hash = `#/c/${INBOX_ID}`;
+  };
+
+  const inbox = state.containers.find(c => c.id === INBOX_ID);
+  if (!inbox || entriesOf(INBOX_ID).length === 0) {
+    row.innerHTML = `
+      <div class="container-row-left">
+        <div class="container-row-title">
+          <span class="type-mark inbox">Inbox</span>
+          Inbox
+        </div>
+        <p class="container-row-tagline muted">Empty. Click <em>Ad-hoc</em> above to capture an entry.</p>
+      </div>
+      <div class="container-row-right">—</div>
+    `;
+    return row;
+  }
+
+  const count   = entriesOf(INBOX_ID).length;
+  const open    = openActionsOf(INBOX_ID);
+  const overdue = open.filter(isOverdue).length;
+  const lt      = lastTouchedOf(INBOX_ID);
+
+  row.innerHTML = `
+    <div class="container-row-left">
+      <div class="container-row-title">
+        <span class="type-mark inbox">Inbox</span>
+        Inbox
+      </div>
+      <p class="container-row-tagline">${count} ${count === 1 ? 'entry' : 'entries'} waiting to be filed</p>
+      <div class="container-row-meta">
+        ${open.length ? `<span class="open-pill">${open.length} open${overdue ? ' · ' + overdue + ' overdue' : ''}</span>` : ''}
+      </div>
+    </div>
+    <div class="container-row-right">${lt ? fmtWhen(lt) : 'no activity'}</div>
+  `;
+  return row;
+}
+
 function renderContainerRow(c) {
   const row = document.createElement('div');
   row.className = 'container-row';
@@ -295,8 +378,8 @@ function renderContainerRow(c) {
   const open = openActionsOf(c.id);
   const overdue = open.filter(isOverdue).length;
   const lt = lastTouchedOf(c.id);
-  const typeLabel = c.type === 'project' ? 'Project' : 'Reference';
-  const typeCls   = c.type === 'project' ? 'project' : 'reference';
+  const typeLabel = containerLabel(c, 'short');
+  const typeCls   = containerTypeCls(c);
 
   row.innerHTML = `
     <div class="container-row-left">
@@ -355,8 +438,11 @@ function renderContainer(main, c) {
   main.querySelector('#project-title').textContent = c.title;
 
   const typeBadge = main.querySelector('#project-type-badge');
-  typeBadge.textContent = c.type === 'project' ? 'Project' : 'Reference File';
-  if (c.type === 'reference_file') typeBadge.classList.add('reference');
+  typeBadge.textContent = containerLabel(c, 'full');
+  typeBadge.classList.add(containerTypeCls(c));
+
+  const backLink = main.querySelector('#project-back-link');
+  if (backLink && c.type === 'inbox') backLink.textContent = '← Home';
 
   const tagline = main.querySelector('#project-tagline');
   if (c.goal_or_purpose) tagline.textContent = c.goal_or_purpose;
@@ -376,7 +462,12 @@ function renderContainer(main, c) {
     tagsDiv.appendChild(span);
   }
 
-  main.querySelector('[data-act="edit-project"]').onclick = () => openEditContainerModal(c);
+  const editBtn = main.querySelector('[data-act="edit-project"]');
+  if (c.type === 'inbox') {
+    editBtn.remove();
+  } else {
+    editBtn.onclick = () => openEditContainerModal(c);
+  }
   main.querySelector('[data-act="new-entry"]').onclick = () => openEntryDrawer(c.id, null);
 
   renderEntryStack(c.id);
@@ -410,6 +501,7 @@ function renderEntryCard(entry) {
   };
   const participants = entry.participants || [];
   const kindLabel = { meeting: 'Meeting', email: 'Email', freetext: 'Freetext' }[entry.kind] || 'Entry';
+  const isInbox = entry.container_id === INBOX_ID;
 
   card.innerHTML = `
     <div class="entry-card-head">
@@ -424,7 +516,30 @@ function renderEntryCard(entry) {
       <span class="count"><span class="glyph a">A</span>${counts.a}</span>
       <span class="count"><span class="glyph u">U</span>${counts.u}</span>
     </div>
+    ${isInbox ? `
+      <div class="entry-card-promote">
+        <button class="btn tiny" data-act="promote" data-promote-type="project">Promote to project</button>
+        <button class="btn tiny" data-act="promote" data-promote-type="reference_file">Promote to reference file</button>
+      </div>
+    ` : ''}
   `;
+
+  if (isInbox) {
+    card.querySelectorAll('[data-act="promote"]').forEach(btn => {
+      btn.onclick = (ev) => {
+        ev.stopPropagation();
+        openNewContainerModal(btn.dataset.promoteType, {
+          presetTitle: entry.title || '',
+          onCreate: (newC) => {
+            entry.container_id = newC.id;
+            entry.updated_at = nowIso();
+            scheduleSave();
+          },
+        });
+      };
+    });
+  }
+
   return card;
 }
 
@@ -479,6 +594,14 @@ function renderRailItem(action) {
 }
 
 // ---------- Drawer (entry detail / composer) -----------------------
+
+// Quick-capture path: lazy-creates the Inbox container, opens an empty
+// entry drawer pointing at it. The user can change the container picker
+// in the drawer to file the entry directly into a project/reference.
+function openAdHocEntryDrawer() {
+  const inbox = getOrCreateInbox();
+  openEntryDrawer(inbox.id, null);
+}
 
 function openEntryDrawer(containerId, entryId, scrollToAtomId = null) {
   const drawer = document.getElementById('drawer');
@@ -578,6 +701,13 @@ function renderDrawerInner(entryId) {
       </div>
 
       <label class="field">
+        <span class="label">In</span>
+        <select data-field="container_id">
+          ${renderContainerPickerOptions(e.container_id)}
+        </select>
+      </label>
+
+      <label class="field">
         <span class="label">Participants</span>
         <div class="chips-input" data-chips="participants"></div>
       </label>
@@ -614,6 +744,25 @@ function renderDrawerInner(entryId) {
   };
 }
 
+function renderContainerPickerOptions(selectedId) {
+  const projects   = state.containers.filter(c => c.type === 'project'        && c.status !== 'archived');
+  const references = state.containers.filter(c => c.type === 'reference_file' && c.status !== 'archived');
+  const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '');
+  projects.sort(byTitle);
+  references.sort(byTitle);
+
+  const opt = (id, label) =>
+    `<option value="${escHtml(id)}" ${id === selectedId ? 'selected' : ''}>${escHtml(label)}</option>`;
+
+  return `
+    <optgroup label="Inbox">
+      ${opt(INBOX_ID, 'Inbox')}
+    </optgroup>
+    ${projects.length ? `<optgroup label="Projects">${projects.map(c => opt(c.id, c.title)).join('')}</optgroup>` : ''}
+    ${references.length ? `<optgroup label="Reference files">${references.map(c => opt(c.id, c.title)).join('')}</optgroup>` : ''}
+  `;
+}
+
 function wireDrawerEntryFields(entryId) {
   const drawer = document.getElementById('drawer');
   const e = state.entries.find(en => en.id === entryId);
@@ -641,6 +790,13 @@ function wireDrawerEntryFields(entryId) {
     e.updated_at = nowIso();
     scheduleSave();
     refreshMeta();
+  };
+  drawer.querySelector('[data-field="container_id"]').onchange = (ev) => {
+    const newId = ev.target.value;
+    if (newId === INBOX_ID) getOrCreateInbox();
+    e.container_id = newId;
+    e.updated_at = nowIso();
+    scheduleSave();
   };
   drawer.querySelector('[data-field="notes"]').addEventListener('input', (ev) => {
     e.notes = ev.target.value;
@@ -909,7 +1065,8 @@ function closeModal() {
 
 function escapeModal(ev) { if (ev.key === 'Escape') closeModal(); }
 
-function openNewContainerModal(type) {
+function openNewContainerModal(type, opts = {}) {
+  const { presetTitle = '', onCreate } = opts;
   const typeLabel = type === 'project' ? 'project' : 'reference file';
   const goalLabel = type === 'project' ? 'Goal' : 'Purpose';
   const goalHint  = type === 'project'
@@ -919,7 +1076,7 @@ function openNewContainerModal(type) {
     <h2>New ${typeLabel}</h2>
     <label class="field">
       <span class="label">Title</span>
-      <input type="text" id="m-title" autofocus />
+      <input type="text" id="m-title" value="${escHtml(presetTitle)}" autofocus />
     </label>
     <label class="field">
       <span class="label">${goalLabel}</span>
@@ -947,6 +1104,7 @@ function openNewContainerModal(type) {
         created_at: nowIso(), updated_at: nowIso(),
       };
       state.containers.push(c);
+      onCreate?.(c);
       scheduleSave();
       closeModal();
       location.hash = `#/c/${encodeURIComponent(id)}`;

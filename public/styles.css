@@ -396,6 +396,12 @@ label.field > .label {
 }
 .container-row-title .type-mark.project    { color: var(--thread); }
 .container-row-title .type-mark.reference  { color: var(--d-tone); }
+.container-row-title .type-mark.inbox      { color: var(--mute); }
+
+/* Pinned Inbox row sits above the regular container list so quick-capture
+   entries are always one click away. The thicker bottom edge separates it
+   from the project/reference list that follows. */
+.inbox-row { border-bottom: 2px solid var(--mute-soft); }
 
 .container-row-tagline {
   color: var(--mute);
@@ -486,6 +492,10 @@ label.field > .label {
 .type-badge.reference {
   background: var(--d-faint);
   color: var(--d-tone);
+}
+.type-badge.inbox {
+  background: rgba(122, 118, 106, 0.12);
+  color: var(--mute);
 }
 
 .project-tagline {
@@ -648,6 +658,17 @@ label.field > .label {
 .glyph.d { background: var(--d-faint); color: var(--d-tone); }
 .glyph.a { background: var(--a-faint); color: var(--a-tone); }
 .glyph.u { background: var(--u-faint); color: var(--u-tone); }
+
+/* Promote buttons appear under inbox entry cards so they can be turned
+   into the first entry of a fresh project or reference file. */
+.entry-card-promote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--paper-edge);
+}
 
 /* ------------------------------------------------------------------ */
 /* Action rail                                                         */
