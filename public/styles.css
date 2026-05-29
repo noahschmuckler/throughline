@@ -904,6 +904,10 @@ label.field > .label {
 .atom-item.a .rail { background: var(--a-tone); }
 .atom-item.u .rail { background: var(--u-tone); }
 
+/* Closed action: rail switches from copper to moss to signal completion. */
+.atom-item.a.closed .rail { background: var(--u-tone); }
+.atom-item.a.closed .atom-body { color: var(--ink-soft); }
+
 .atom-body {
   font-size: 0.95rem;
   color: var(--ink);
@@ -944,11 +948,47 @@ label.field > .label {
   border: 1px dashed var(--card-edge);
 }
 .atom-meta .due.overdue { color: var(--overdue); font-weight: 500; }
+.atom-meta .closed-mark {
+  color: var(--u-tone);
+  font-weight: 500;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
 .atom-meta .parent-ref {
   font-family: var(--mono);
   font-size: 0.72rem;
   color: var(--u-tone);
 }
+
+/* Inline reference to the outcome atom that closed this action. Sits
+   beneath the meta row, spanning the same two grid columns. */
+.atom-outcome-ref {
+  grid-column: 2 / 4;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--u-faint);
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+.atom-outcome-ref .glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  margin-top: 1px;
+}
+.atom-outcome-ref .outcome-body { flex: 1 1 auto; }
 
 .atom-add-row {
   display: grid;

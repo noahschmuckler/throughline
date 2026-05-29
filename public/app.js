@@ -185,8 +185,14 @@ function openActionsOf(cid) {
   return actions.filter(a => !closed.has(a.id));
 }
 
+// First outcome atom (if any) that closes this action.
+function outcomeForAction(actionId) {
+  return state.atoms.find(a => a.kind === 'outcome' && a.parent_atom_id === actionId) || null;
+}
+
 function isOverdue(action) {
   if (!action.due_date) return false;
+  if (action.kind === 'action' && outcomeForAction(action.id)) return false;
   return action.due_date < new Date().toISOString().slice(0, 10);
 }
 
@@ -896,17 +902,32 @@ function singular(label) {
 
 function renderAtomItem(atom) {
   const cls = { observation: 'o', decision: 'd', action: 'a', outcome: 'u' }[atom.kind];
+  const closingOutcome = atom.kind === 'action' ? outcomeForAction(atom.id) : null;
+  const itemCls = cls + (closingOutcome ? ' closed' : '');
+
   let metaHtml = '';
+  let outcomeRefHtml = '';
   if (atom.kind === 'action') {
-    const overdue = isOverdue(atom);
+    const overdue = !closingOutcome && isOverdue(atom);
     metaHtml = `
       <div class="atom-meta">
         <input type="text" data-action-field="assigned_to" placeholder="assigned to…"
                value="${escHtml(atom.assigned_to || '')}" list="dl-participants" />
         <input type="date" data-action-field="due_date" value="${escHtml(atom.due_date || '')}" />
+        ${closingOutcome ? '<span class="closed-mark">✓ closed</span>' : ''}
         ${overdue ? '<span class="due overdue">overdue</span>' : ''}
       </div>
     `;
+    if (closingOutcome) {
+      const body = (closingOutcome.body || '').trim() || '(no outcome text)';
+      const shown = body.length > 240 ? body.slice(0, 240) + '…' : body;
+      outcomeRefHtml = `
+        <div class="atom-outcome-ref">
+          <span class="glyph u">U</span>
+          <span class="outcome-body">${escHtml(shown)}</span>
+        </div>
+      `;
+    }
   } else if (atom.kind === 'outcome') {
     metaHtml = `
       <div class="atom-meta">
@@ -917,11 +938,12 @@ function renderAtomItem(atom) {
     `;
   }
   return `
-    <div class="atom-item ${cls}" data-atom-id="${atom.id}">
+    <div class="atom-item ${itemCls}" data-atom-id="${atom.id}">
       <div class="rail"></div>
       <textarea class="atom-body" data-atom-body rows="1">${escHtml(atom.body)}</textarea>
       <div class="tools"><button class="btn ghost tiny" data-atom-delete title="Delete">×</button></div>
       ${metaHtml}
+      ${outcomeRefHtml}
     </div>
   `;
 }
@@ -1041,6 +1063,9 @@ function wireAtomItem(item, entryId) {
         atom.parent_atom_id = ev.target.value || null;
         atom.updated_at = nowIso();
         scheduleSave();
+        // Re-render so the now-closed (or freshly re-opened) parent
+        // action in the same drawer reflects the new linkage.
+        renderDrawerInner(entryId);
       };
     }
   }
