@@ -5,7 +5,8 @@
   "description": "Shared dyad accountability tool — projects, dated entries, observations / decisions / actions / outcomes. Cloudflare Pages demo; orange-device production form to follow.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "seed": "node scripts/seed.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
