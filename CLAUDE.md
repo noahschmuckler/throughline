@@ -75,14 +75,28 @@ only speaks REST. Writes are atomic-ish (tmp + rename) in `lib/store.js`.
 ## AI ingestion seam (stub today)
 
 `shared/atomize.js` + `shared/llm.js` are **runtime-agnostic** ESM (no
-`node:*`, only `fetch`) imported by **both** backends. Today the default
-`LLM_PROVIDER=heuristic` runs a deterministic stub (sentence-split +
-keyword classify + project keyword-match) so the capture→triage→commit
-loop works with zero API spend. Switching `LLM_PROVIDER=anthropic`
-(+`ANTHROPIC_API_KEY`) routes through the real Messages API. Every spot
-the model will eventually do the work is marked `// TODO(AI)`. This
-mirrors atom_sandbox's `lib/llm.js` provider pattern so the two stay
-translatable.
+`node:*`, only `fetch`) imported by **both** backends. `/api/atomize`
+runs `atomizeEntry(entry, { projects, llmCall })`; `makeLLMCall(env)`
+picks the provider from `LLM_PROVIDER`:
+
+- **`heuristic`** (default) — deterministic stub (sentence-split +
+  keyword classify + project keyword-match). Zero spend; the shipping
+  default so the capture→triage→commit loop always works.
+- **`anthropic`** (+`ANTHROPIC_API_KEY`) — real Messages API. Cloud /
+  dev box. On the Worker, set the key with `wrangler secret put`.
+- **`cdsapi`** — Optum's on-network `single_response` endpoint
+  (`POST {system,user,model,verbose}`, reply under
+  `response|reply|text|content|output|answer`). **This is the
+  orange-device provider** — the enterprise box can't reach Anthropic,
+  but cdsapi needs no key on-network. Tier models `gpt-nano|gpt-mini|
+  gpt-5.4`; pin one with `LLM_MODEL`. Mirrors atom_sandbox's
+  `lib/llm.js` exactly so the two stay translatable.
+
+`atomizeEntry` is provider-agnostic: it sends the prompt
+(`buildAtomizePrompt`), then `parseModelJson` tolerantly pulls JSON out
+of the reply (handles ```` ```json ```` fences / surrounding prose); a
+bad/empty reply degrades to the heuristic rather than 500-ing. Remaining
+model-quality work is marked `// TODO(AI)`.
 
 ## Demo data
 

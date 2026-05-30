@@ -67,7 +67,7 @@ export async function atomizeEntry(entry, { projects = [], llmCall = null } = {}
     // degrades to the heuristic rather than throwing into the request handler.
     try {
       const prompt = buildAtomizePrompt(entry, { projects });
-      const raw = await llmCall({ prompt, tier: 'reason' });
+      const raw = await llmCall({ prompt, tier: 'reason', json: true });
       const parsed = parseModelJson(raw);
       if (parsed && Array.isArray(parsed.clusters)) {
         return { clusters: normalizeClusters(parsed.clusters, projects), source: 'llm' };
