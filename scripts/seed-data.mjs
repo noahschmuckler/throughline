@@ -59,6 +59,10 @@ export function buildDemoData(now = new Date()) {
       ...(c.emoji ? { emoji: c.emoji } : {}),
       ...(c.color ? { color: c.color } : {}),
       ...(c.category ? { category: c.category } : {}),
+      ...(typeof c.completion === 'number' ? { completion: c.completion } : {}),
+      ...(c.owners ? { owners: c.owners } : {}),
+      ...(c.next_meeting ? { next_meeting: c.next_meeting } : {}),
+      ...(c.metrics ? { metrics: c.metrics } : {}),
       created_at: c.created_at || offsetIso(-120, 9, 0),
       updated_at: c.updated_at || offsetIso(0, 17, 0),
     });
@@ -119,6 +123,13 @@ export function buildDemoData(now = new Date()) {
     emoji: '💸',
     color: '#b05a2a',
     category: 'Finance',
+    completion: 60,
+    owners: ['Noah', 'Diane'],
+    next_meeting: offsetDate(4),
+    metrics: [
+      { label: 'Evaluation complete %', target: 100, color: '#b05a2a',
+        data: [5, 12, 25, 38, 52, 60], interventions: [{ idx: 3, label: 'Gusto demo' }] },
+    ],
     title: 'Acme Payroll renewal vs. Gusto switch',
     goal_or_purpose:
       'Decide whether to renew Acme Payroll or switch to Gusto before the 06-30 contract auto-renew.',
@@ -280,6 +291,13 @@ export function buildDemoData(now = new Date()) {
     emoji: '🧑‍💼',
     color: '#5a7a5e',
     category: 'Human Resources',
+    completion: 80,
+    owners: ['Amanda', 'Noah'],
+    next_meeting: offsetDate(7),
+    metrics: [
+      { label: 'Hiring funnel %', target: 100, color: '#5a7a5e',
+        data: [20, 35, 50, 62, 72, 80], interventions: [{ idx: 1, label: 'Role posted' }] },
+    ],
     title: 'Ops Coordinator backfill',
     goal_or_purpose:
       'Hire and onboard an Operations Coordinator backfill with a signed offer by 06-15.',
@@ -409,6 +427,15 @@ export function buildDemoData(now = new Date()) {
     emoji: '🔁',
     color: '#2e7dbd',
     category: 'Technology',
+    completion: 57,
+    owners: ['Noah'],
+    next_meeting: offsetDate(2),
+    metrics: [
+      { label: 'Migration progress %', target: 100, color: '#2e7dbd',
+        data: [5, 12, 22, 33, 45, 57], interventions: [{ idx: 4, label: 'Sandbox provisioned' }] },
+      { label: 'Field mapping %', target: 100, color: '#5a7a5e',
+        data: [0, 8, 20, 38, 55, 70] },
+    ],
     title: 'Salesforce -> HubSpot cutover',
     goal_or_purpose:
       'Cut over from Salesforce to HubSpot by 06-12 with no data loss and the sales team trained on the new system.',

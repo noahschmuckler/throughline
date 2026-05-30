@@ -120,6 +120,15 @@ the preview worker URL). Production KV is whatever was there
 beforehand — by snapshot date that's just one leftover `smoke_5` test
 container.
 
+**Orange ships BLANK.** The seeder is a local-test convenience only —
+do **not** run it on orange. The Node server returns an empty state
+(`{containers:[], entries:[], atoms:[], people_meta:{}}`) until the
+first write, and `data/` is gitignored so the local demo file can't
+travel in the bundle. On orange you point `THROUGHLINE_DB` at a fresh
+OneDrive path and start clean: the first ad-hoc capture lazy-creates
+the Inbox, and projects are created by hand. The sample glidepath
+metrics / owners live only in `scripts/seed-data.mjs` (demo_* only).
+
 ## Data model — at a glance
 
 Authoritative source: `public/app.js` (vanilla DOM, single-file SPA,

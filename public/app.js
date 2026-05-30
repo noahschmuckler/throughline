@@ -423,21 +423,23 @@ function renderHome(main) {
   main.querySelector('[data-act="new-adhoc"]').onclick =
     () => openAdHocEntryDrawer();
 
-  renderSummaryBar();
+  renderHomeSub();
   wireViewToggle();
   renderHomeView();
 }
 
-function renderSummaryBar() {
-  const el = document.getElementById('home-summary');
+// The dark-header sub line: "N projects · X open · Y overdue · next <date>".
+function renderHomeSub() {
+  const el = document.getElementById('home-sub');
   if (!el) return;
   const s = dashboardSummary();
-  el.innerHTML = `
-    <span class="sumitem"><span class="sumval">${s.projectCount}</span><span class="sumlbl">projects</span></span>
-    <span class="sumitem"><span class="sumval ${s.open > 12 ? 'warn' : ''}">${s.open}</span><span class="sumlbl">open</span></span>
-    <span class="sumitem"><span class="sumval ${s.overdue > 0 ? 'warn' : ''}">${s.overdue}</span><span class="sumlbl">overdue</span></span>
-    ${s.nextMeeting ? `<span class="sumitem"><span class="sumval small">${fmtDate(s.nextMeeting)}</span><span class="sumlbl">next meeting</span></span>` : ''}
-  `;
+  const parts = [
+    `${s.projectCount} ${s.projectCount === 1 ? 'project' : 'projects'}`,
+    `${s.open} open`,
+  ];
+  if (s.overdue) parts.push(`<span class="hdr-warn">${s.overdue} overdue</span>`);
+  if (s.nextMeeting) parts.push(`next ${fmtDate(s.nextMeeting)}`);
+  el.innerHTML = parts.join(' · ');
 }
 
 function wireViewToggle() {
@@ -789,9 +791,20 @@ function renderContainer(main, c) {
 
   main.querySelector('#project-title').textContent = c.title;
 
-  const typeBadge = main.querySelector('#project-type-badge');
-  typeBadge.textContent = containerLabel(c, 'full');
-  typeBadge.classList.add(containerTypeCls(c));
+  // Panel-header emoji + sub line (category for projects, type label otherwise).
+  const emojiEl = main.querySelector('#project-emoji');
+  if (c.type === 'project' && c.emoji) {
+    emojiEl.textContent = c.emoji;
+    emojiEl.hidden = false;
+  }
+  const subEl = main.querySelector('#project-sub');
+  if (c.type === 'project') {
+    const bits = [c.category || 'Project'];
+    bits.push(`${completionOf(c)}% complete`);
+    subEl.textContent = bits.join(' · ');
+  } else {
+    subEl.textContent = containerLabel(c, 'full');
+  }
 
   const backLink = main.querySelector('#project-back-link');
   if (backLink && c.type === 'inbox') backLink.textContent = '← Home';
@@ -2152,8 +2165,14 @@ function commitTriage() {
 // ---------- Boot ---------------------------------------------------
 
 (async function boot() {
-  console.log('[throughline] client v0.3 — delegated add handlers');
+  console.log('[throughline] client v0.4 — playground theme');
   setupDrawerDelegation();
+  const meta = document.getElementById('hdr-meta');
+  if (meta) {
+    const d = new Date();
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    meta.textContent = `Dyad workspace · ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+  }
   await loadState();
   render();
 })();

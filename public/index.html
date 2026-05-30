@@ -8,15 +8,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap"
     />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <a href="#/" class="brand" aria-label="Throughline home">
-        <span class="brand-mark" aria-hidden="true">⎯</span>
-        <span class="brand-word">Throughline</span>
+    <header class="hdr-top">
+      <a href="#/" class="hdr-top-left" aria-label="Throughline home">
+        <span class="hdr-badge">Throughline</span>
+        <span class="hdr-meta" id="hdr-meta"></span>
       </a>
       <div class="topbar-status" id="status" aria-live="polite"></div>
     </header>
@@ -45,26 +45,20 @@
 
     <template id="tpl-home">
       <section class="home">
-        <div class="home-head">
-          <div class="home-head-left">
-            <h1 class="display">What are we working on?</h1>
-            <div class="summary-bar" id="home-summary"></div>
+        <div class="hdr-main">
+          <div class="hdr-main-left">
+            <h1 class="hdr-title">Project dashboard</h1>
+            <div class="hdr-sub" id="home-sub"></div>
           </div>
-          <div class="home-actions">
-            <button class="btn primary" data-act="new-project">
-              New project
-            </button>
-            <button class="btn" data-act="new-reference-file">
-              New reference file
-            </button>
-            <button class="btn" data-act="new-adhoc">
-              Ad-hoc
-            </button>
+          <div class="view-toggle" id="home-view-toggle" role="tablist">
+            <button class="vtbtn" data-view="projects">▦&nbsp; Projects</button>
+            <button class="vtbtn" data-view="people">People</button>
           </div>
         </div>
-        <div class="view-toggle" id="home-view-toggle" role="tablist">
-          <button class="vtbtn" data-view="projects">▦&nbsp; Projects</button>
-          <button class="vtbtn" data-view="people">People</button>
+        <div class="home-actionbar">
+          <button class="btn primary" data-act="new-project">New project</button>
+          <button class="btn" data-act="new-reference-file">New reference file</button>
+          <button class="btn" data-act="new-adhoc">Ad-hoc capture</button>
         </div>
         <div id="home-view-body"></div>
       </section>
@@ -91,25 +85,27 @@
 
     <template id="tpl-project">
       <section class="project">
-        <div class="project-head">
-          <div class="project-head-meta">
-            <a href="#/" class="back-link" id="project-back-link">← All projects</a>
-            <span class="type-badge" id="project-type-badge"></span>
+        <div class="panel-hdr">
+          <a href="#/" class="back-btn" id="project-back-link">← Back</a>
+          <span class="panel-emoji" id="project-emoji" hidden></span>
+          <div class="panel-hdr-id">
+            <div class="panel-title" id="project-title"></div>
+            <div class="panel-sub" id="project-sub"></div>
           </div>
-          <h1 class="display" id="project-title"></h1>
+          <div class="tab-group" id="project-tabs" hidden>
+            <button class="tab-btn" data-ptab="overview">Overview</button>
+            <button class="tab-btn" data-ptab="entries">Entries</button>
+          </div>
+          <button class="btn ghost light" data-act="edit-project">Edit</button>
+        </div>
+
+        <div class="project-subhead">
           <p class="project-tagline" id="project-tagline"></p>
           <div class="project-tags" id="project-tags"></div>
           <details class="project-summary" id="project-summary-details" hidden>
             <summary>Summary</summary>
             <div class="prose" id="project-summary-body"></div>
           </details>
-          <div class="project-head-actions">
-            <div class="tab-group" id="project-tabs" hidden>
-              <button class="tab-btn" data-ptab="overview">Overview</button>
-              <button class="tab-btn" data-ptab="entries">Entries</button>
-            </div>
-            <button class="btn ghost" data-act="edit-project">Edit</button>
-          </div>
         </div>
 
         <div id="project-tabbody"></div>

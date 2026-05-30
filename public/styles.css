@@ -6,11 +6,18 @@
 
 :root {
   /* Surfaces */
-  --paper:        #f6f2e9;
-  --paper-edge:   #ece6d6;
+  --paper:        #f5f3ee;
+  --paper-edge:   #e3ded2;
   --card:         #ffffff;
-  --card-edge:    #e6dfcf;
-  --rail:         #fbf8f1;
+  --card-edge:    #ddd7ca;
+  --rail:         #fbf9f4;
+
+  /* Playground identity — navy header, teal accent */
+  --navy:         #1a2744;
+  --navy-soft:    #25344f;
+  --teal:         #00788a;
+  --on-navy:      rgba(255,255,255,0.92);
+  --on-navy-mute: rgba(255,255,255,0.5);
 
   /* Ink */
   --ink:          #1d1f24;
@@ -38,8 +45,8 @@
   --overdue-faint:#f7e0db;
 
   /* Type */
-  --display:      "Fraunces", Georgia, "Times New Roman", serif;
-  --sans:         "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --display:      "DM Serif Display", Georgia, "Times New Roman", serif;
+  --sans:         "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --mono:         "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
   /* Geometry */
@@ -1274,3 +1281,86 @@ input[type="color"] { height: 34px; padding: 2px; cursor: pointer; }
 .t-atom-owner { font-size: 0.7rem; color: var(--mute); margin-top: 2px; }
 
 @media (max-width: 640px) { .t-body { flex-direction: column; } .t-sidebar { width: 100%; border-left: none; border-top: 1px solid var(--card-edge); } }
+
+/* ================================================================== */
+/* Playground theme — navy header zone, DM fonts                      */
+/* ================================================================== */
+
+/* Constrain the column; dark header bars align with it. */
+main { padding-top: 0; }
+
+/* Persistent dark top strip (badge + meta + save status). */
+.hdr-top {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 32px;
+  background: var(--navy);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  position: sticky; top: 0; z-index: 10;
+}
+.hdr-top-left { display: inline-flex; align-items: center; gap: 11px; }
+.hdr-top-left:hover { text-decoration: none; }
+.hdr-badge {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: #fff; background: var(--teal); padding: 3px 11px; border-radius: 11px;
+}
+.hdr-meta { font-size: 0.72rem; color: var(--on-navy-mute); }
+.hdr-top .topbar-status { color: var(--on-navy-mute); }
+.hdr-top .topbar-status[data-state="saving"] { color: #7fd4e0; }
+.hdr-top .topbar-status[data-state="saved"]  { color: #9fd9ac; }
+.hdr-top .topbar-status[data-state="error"]  { color: #f0a59a; }
+
+/* Per-view dark header band (home: title + toggle). Negative side margins so
+   it spans the full column and lines up with .hdr-top above it. */
+.hdr-main, .panel-hdr {
+  margin: 0 -32px;
+  padding: 13px 32px 18px;
+  background: var(--navy);
+}
+.hdr-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.hdr-title { font-family: var(--display); font-size: 1.7rem; color: #fff; line-height: 1.05; margin: 0; }
+.hdr-sub { font-size: 0.8rem; color: var(--on-navy-mute); margin-top: 5px; }
+.hdr-warn { color: #f0a59a; font-weight: 500; }
+
+/* View toggle — dark variant (overrides the earlier light rule). */
+.hdr-main .view-toggle { margin: 0; background: rgba(255,255,255,0.09); }
+.hdr-main .vtbtn { color: var(--on-navy-mute); }
+.hdr-main .vtbtn.active { background: #fff; color: var(--navy); box-shadow: none; }
+
+/* Light action bar under the dark header. */
+.home-actionbar { display: flex; gap: 10px; padding: 16px 0 4px; flex-wrap: wrap; }
+
+/* Project detail dark panel header. */
+.panel-hdr { display: flex; align-items: center; gap: 12px; padding: 12px 32px; }
+.back-btn {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #fff; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 6px; padding: 6px 12px; white-space: nowrap;
+}
+.back-btn:hover { text-decoration: none; background: rgba(255,255,255,0.2); }
+.panel-emoji { font-size: 1.25rem; }
+.panel-hdr-id { flex: 1; min-width: 0; }
+.panel-title { font-family: var(--display); font-size: 1.2rem; color: #fff; line-height: 1.15; }
+.panel-sub { font-size: 0.72rem; color: var(--on-navy-mute); margin-top: 2px; }
+.panel-hdr .tab-group { display: inline-flex; gap: 2px; background: rgba(255,255,255,0.09); border-radius: 6px; padding: 2px; }
+.panel-hdr .tab-btn {
+  font-family: var(--sans); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; border: none; border-radius: 4px; padding: 6px 13px; cursor: pointer;
+  background: transparent; color: var(--on-navy-mute);
+}
+.panel-hdr .tab-btn.active { background: #fff; color: var(--navy); }
+.btn.ghost.light { color: #fff; border-color: rgba(255,255,255,0.25); background: transparent; }
+.btn.ghost.light:hover { background: rgba(255,255,255,0.12); }
+
+/* Light sub-head strip under the panel header (tagline / tags / summary). */
+.project-subhead { padding: 16px 0 4px; }
+.project-subhead:empty { display: none; }
+.project-subhead .project-tagline { font-size: 1rem; color: var(--ink-soft); margin: 0 0 8px; }
+
+/* DM Serif has a single weight — neutralize opsz/weight tweaks meant for Fraunces. */
+h1, h2, h3, h4, .hdr-title, .panel-title, .tile-title, .kpi-value, .pd-name, .t-title {
+  font-variation-settings: normal; font-weight: 400;
+}
