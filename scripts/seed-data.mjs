@@ -54,6 +54,11 @@ export function buildDemoData(now = new Date()) {
       summary: c.summary,
       tags: c.tags || [],
       status: c.status || 'active',
+      // Optional v2 project metadata — pass through only when set so reference
+      // files and minimal projects stay lean.
+      ...(c.emoji ? { emoji: c.emoji } : {}),
+      ...(c.color ? { color: c.color } : {}),
+      ...(c.category ? { category: c.category } : {}),
       created_at: c.created_at || offsetIso(-120, 9, 0),
       updated_at: c.updated_at || offsetIso(0, 17, 0),
     });
@@ -111,6 +116,9 @@ export function buildDemoData(now = new Date()) {
   pushContainer({
     id: 'demo_payroll_renewal',
     type: 'project',
+    emoji: '💸',
+    color: '#b05a2a',
+    category: 'Finance',
     title: 'Acme Payroll renewal vs. Gusto switch',
     goal_or_purpose:
       'Decide whether to renew Acme Payroll or switch to Gusto before the 06-30 contract auto-renew.',
@@ -269,6 +277,9 @@ export function buildDemoData(now = new Date()) {
   pushContainer({
     id: 'demo_ops_coordinator_hire',
     type: 'project',
+    emoji: '🧑‍💼',
+    color: '#5a7a5e',
+    category: 'Human Resources',
     title: 'Ops Coordinator backfill',
     goal_or_purpose:
       'Hire and onboard an Operations Coordinator backfill with a signed offer by 06-15.',
@@ -395,6 +406,9 @@ export function buildDemoData(now = new Date()) {
   pushContainer({
     id: 'demo_crm_cutover',
     type: 'project',
+    emoji: '🔁',
+    color: '#2e7dbd',
+    category: 'Technology',
     title: 'Salesforce -> HubSpot cutover',
     goal_or_purpose:
       'Cut over from Salesforce to HubSpot by 06-12 with no data loss and the sales team trained on the new system.',

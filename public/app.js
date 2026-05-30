@@ -13,18 +13,25 @@ let lastSavedAt = null;
 let currentDrawerEntryId = null;
 const homeFilters = { search: '', activeTags: new Set() };
 
+// Dashboard view state (home toggle + per-person/per-project tab selections).
+const ui = { homeView: 'projects', personId: null, personTab: 'actions', projectTab: 'overview' };
+
 // ---------- State + persistence ------------------------------------
 
 function emptyState() {
-  return { schema_version: 1, containers: [], entries: [], atoms: [] };
+  return { schema_version: 2, containers: [], entries: [], atoms: [], people_meta: {} };
 }
 
+// Tolerate v1 docs (no people_meta, no v2 container fields). Unknown keys are
+// preserved on save by the backend; here we just guarantee the shapes we read.
 function normalizeState(d) {
   return {
-    schema_version: 1,
+    ...(d && typeof d === 'object' ? d : {}),
+    schema_version: 2,
     containers: Array.isArray(d?.containers) ? d.containers : [],
     entries:    Array.isArray(d?.entries)    ? d.entries    : [],
     atoms:      Array.isArray(d?.atoms)      ? d.atoms      : [],
+    people_meta: d?.people_meta && typeof d.people_meta === 'object' ? d.people_meta : {},
   };
 }
 
@@ -220,14 +227,167 @@ function allParticipants() {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
+// ---------- Dashboard helpers --------------------------------------
+
+const TONE = {
+  g: { t: '#1a5c3a', b: '#d6ead8' }, // moss — on track
+  a: { t: '#b8860b', b: '#fff3cd' }, // amber — watch
+  r: { t: '#8b1a1a', b: '#fdecea' }, // rust — behind
+};
+function toneFor(v, lo = 40, hi = 70) { return v >= hi ? TONE.g : v >= lo ? TONE.a : TONE.r; }
+
+// A stable fallback color for projects with no `color` set, keyed off the id so
+// it doesn't flicker between renders.
+const TILE_PALETTE = ['#2e7dbd', '#00788a', '#5a7a5e', '#6b5b9e', '#b05a2a', '#c8442a', '#2D6A4F', '#1565C0'];
+function projectColor(c) {
+  if (c?.color) return c.color;
+  let h = 0;
+  for (const ch of (c?.id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TILE_PALETTE[h % TILE_PALETTE.length];
+}
+
+const projects     = () => state.containers.filter(c => c.type === 'project' && c.status !== 'archived');
+const referenceFiles = () => state.containers.filter(c => c.type === 'reference_file' && c.status !== 'archived');
+
+// Completion: explicit field if set, else a light derived proxy (share of
+// actions closed) so a fresh project still shows a meaningful bar.
+function completionOf(c) {
+  if (typeof c.completion === 'number') return Math.max(0, Math.min(100, c.completion));
+  const atoms = atomsOfContainer(c.id);
+  const actions = atoms.filter(a => a.kind === 'action');
+  if (!actions.length) return 0;
+  const closed = actions.filter(a => outcomeForAction(a.id)).length;
+  return Math.round((closed / actions.length) * 100);
+}
+
+function lastEntryDate(cid) {
+  const lt = lastTouchedOf(cid);
+  return lt ? fmtDate(lt) : null;
+}
+
+function miniBar(progress, color, h = 4) {
+  return `<div class="minibar" style="height:${h}px"><span style="width:${Math.min(progress, 100)}%;background:${color}"></span></div>`;
+}
+
+function smoothPath(pts) {
+  if (!pts.length) return '';
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    const cx = ((x0 + x1) / 2).toFixed(1);
+    d += ` C${cx},${y0.toFixed(1)} ${cx},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return d;
+}
+
+// Glidepath SVG, driven by container.metrics. Each metric:
+//   { label, target, color, data:number[], interventions:[{idx,label}] }
+// Returns '' when there is nothing to plot (caller shows a placeholder).
+function renderGlidepath(metrics) {
+  const series = (metrics || []).filter(m => Array.isArray(m.data) && m.data.length >= 2);
+  if (!series.length) return '';
+  const MU = '#5a6070', BO = '#d8d3c8';
+  const n = Math.max(...series.map(m => m.data.length));
+  const W = 520, H = 196, PL = 42, PT = 34, PR = 16, PB = 30;
+  const IW = W - PL - PR, IH = H - PT - PB;
+  const xAt = i => PL + (n === 1 ? 0 : i * (IW / (n - 1)));
+  const yAt = v => PT + IH - (Math.min(Math.max(v, 0), 110) / 100) * IH;
+  const pts = data => data.map((v, i) => [xAt(i), yAt(v)]);
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">`;
+  [0, 25, 50, 75, 100].forEach(v => {
+    svg += `<line x1="${PL}" y1="${yAt(v).toFixed(1)}" x2="${W - PR}" y2="${yAt(v).toFixed(1)}" stroke="${v === 0 ? BO : '#ede9e2'}" stroke-width="${v === 0 ? 1 : 0.5}"/>`;
+    svg += `<text x="${PL - 5}" y="${(yAt(v) + 4).toFixed(1)}" text-anchor="end" font-size="9" fill="${MU}">${v}%</text>`;
+  });
+  series.forEach((m, mi) => {
+    const color = m.color || projectColorFallback(mi);
+    const p = pts(m.data);
+    const main = mi === 0;
+    if (typeof m.target === 'number') {
+      svg += `<line x1="${PL}" y1="${yAt(m.target).toFixed(1)}" x2="${W - PR}" y2="${yAt(m.target).toFixed(1)}" stroke="${color}" stroke-width="0.9" stroke-dasharray="5,3" opacity="0.4"/>`;
+    }
+    svg += `<path d="${smoothPath(p)}" fill="none" stroke="${color}" stroke-width="${main ? 2.5 : 1.5}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    p.forEach(([x, y]) => { svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${main ? 3 : 2}" fill="${color}"/>`; });
+    (m.interventions || []).forEach(iv => {
+      if (iv.idx == null || iv.idx >= m.data.length) return;
+      const x = xAt(iv.idx), y = yAt(m.data[iv.idx]);
+      svg += `<line x1="${x.toFixed(1)}" y1="${PT}" x2="${x.toFixed(1)}" y2="${(PT + IH).toFixed(1)}" stroke="${color}" stroke-width="1" stroke-dasharray="3,2" opacity="0.4"/>`;
+      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="${color}"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="#fff"/>`;
+      svg += `<text x="${x.toFixed(1)}" y="16" text-anchor="middle" font-size="8.5" fill="${color}" font-weight="700">${escHtml(iv.label || '')}</text>`;
+    });
+    svg += `<g transform="translate(${PL + mi * 200},${H - 16})"><line x1="0" y1="0" x2="14" y2="0" stroke="${color}" stroke-width="${main ? 2.5 : 1.5}"/><text x="18" y="4" font-size="9" fill="${MU}">${escHtml(m.label || 'metric')}${typeof m.target === 'number' ? ` — target ${m.target}%` : ''}</text></g>`;
+  });
+  svg += '</svg>';
+  return svg;
+}
+function projectColorFallback(i) { return TILE_PALETTE[i % TILE_PALETTE.length]; }
+
+// People are derived from atom assignees. Each person: their open + overdue
+// actions across all containers, and the projects they touch. Optional stored
+// overlay at state.people_meta[name] adds title / color / pathways / reports.
+function derivePeople() {
+  const byName = new Map();
+  const ensure = (name) => {
+    if (!byName.has(name)) byName.set(name, { name, actions: [], projectIds: new Set() });
+    return byName.get(name);
+  };
+  for (const c of state.containers) {
+    if (c.status === 'archived') continue;
+    for (const a of openActionsOf(c.id)) {
+      const who = (a.assigned_to || '').trim();
+      if (!who) continue;
+      const person = ensure(who);
+      person.actions.push({ atom: a, container: c, overdue: isOverdue(a) });
+      person.projectIds.add(c.id);
+    }
+  }
+  const people = [...byName.values()].map(p => {
+    const meta = state.people_meta?.[p.name] || {};
+    return {
+      ...p,
+      projectIds: [...p.projectIds],
+      title: meta.title || '',
+      color: meta.color || stringColor(p.name),
+      pathways: Array.isArray(meta.pathways) ? meta.pathways : [],
+      reports: Array.isArray(meta.reports) ? meta.reports : [],
+      overdueCount: p.actions.filter(a => a.overdue).length,
+    };
+  });
+  people.sort((a, b) => b.overdueCount - a.overdueCount || b.actions.length - a.actions.length || a.name.localeCompare(b.name));
+  return people;
+}
+
+function initials(name) {
+  return (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
+}
+function stringColor(s) {
+  let h = 0;
+  for (const ch of (s || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TILE_PALETTE[h % TILE_PALETTE.length];
+}
+
+function dashboardSummary() {
+  const ps = projects();
+  let open = 0, overdue = 0;
+  for (const c of state.containers) {
+    if (c.status === 'archived') continue;
+    const o = openActionsOf(c.id);
+    open += o.length;
+    overdue += o.filter(isOverdue).length;
+  }
+  const nexts = ps.map(c => c.next_meeting).filter(Boolean).sort();
+  return { projectCount: ps.length, open, overdue, nextMeeting: nexts[0] || null };
+}
+
 // ---------- Routing -------------------------------------------------
 
 function currentRoute() {
   const h = location.hash.replace(/^#/, '');
-  if (!h || h === '/') return { kind: 'home' };
+  if (!h || h === '/') return { kind: 'home', view: 'projects' };
+  if (h === '/people') return { kind: 'home', view: 'people' };
   const m = h.match(/^\/c\/(.+)$/);
   if (m) return { kind: 'container', id: decodeURIComponent(m[1]) };
-  return { kind: 'home' };
+  return { kind: 'home', view: 'projects' };
 }
 
 window.addEventListener('hashchange', () => { closeDrawer(true); render(); });
@@ -239,6 +399,7 @@ function render() {
   main.innerHTML = '';
   const r = currentRoute();
   if (r.kind === 'home') {
+    if (r.view) ui.homeView = r.view;
     renderHome(main);
   } else if (r.kind === 'container') {
     const c = getContainer(r.id);
@@ -262,16 +423,98 @@ function renderHome(main) {
   main.querySelector('[data-act="new-adhoc"]').onclick =
     () => openAdHocEntryDrawer();
 
-  const search = main.querySelector('#home-search');
+  renderSummaryBar();
+  wireViewToggle();
+  renderHomeView();
+}
+
+function renderSummaryBar() {
+  const el = document.getElementById('home-summary');
+  if (!el) return;
+  const s = dashboardSummary();
+  el.innerHTML = `
+    <span class="sumitem"><span class="sumval">${s.projectCount}</span><span class="sumlbl">projects</span></span>
+    <span class="sumitem"><span class="sumval ${s.open > 12 ? 'warn' : ''}">${s.open}</span><span class="sumlbl">open</span></span>
+    <span class="sumitem"><span class="sumval ${s.overdue > 0 ? 'warn' : ''}">${s.overdue}</span><span class="sumlbl">overdue</span></span>
+    ${s.nextMeeting ? `<span class="sumitem"><span class="sumval small">${fmtDate(s.nextMeeting)}</span><span class="sumlbl">next meeting</span></span>` : ''}
+  `;
+}
+
+function wireViewToggle() {
+  const wrap = document.getElementById('home-view-toggle');
+  if (!wrap) return;
+  wrap.querySelectorAll('.vtbtn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === ui.homeView);
+    btn.onclick = () => { location.hash = btn.dataset.view === 'people' ? '#/people' : '#/'; };
+  });
+}
+
+function renderHomeView() {
+  const body = document.getElementById('home-view-body');
+  if (!body) return;
+  body.innerHTML = '';
+  if (ui.homeView === 'people') { renderPeopleView(body); return; }
+  renderHomeProjects(body);
+}
+
+function renderHomeProjects(body) {
+  body.appendChild(tmpl('tpl-home-projects'));
+  const search = document.getElementById('home-search');
   search.value = homeFilters.search;
   search.oninput = () => {
     homeFilters.search = search.value.toLowerCase();
+    renderProjectGrid();
     renderHomeBody();
   };
-
   renderHomeTagChips();
+  renderProjectGrid();
   renderHomeBody();
   renderRecent();
+}
+
+function renderProjectGrid() {
+  const grid = document.getElementById('project-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const items = filterContainers('project').sort((a, b) => {
+    const ta = lastTouchedOf(a.id) || a.created_at || '';
+    const tb = lastTouchedOf(b.id) || b.created_at || '';
+    return tb.localeCompare(ta);
+  });
+  if (!items.length) {
+    grid.innerHTML = `<div class="empty muted tile-empty">No projects yet. Click <strong>New project</strong> to start one.</div>`;
+    return;
+  }
+  for (const c of items) grid.appendChild(renderProjectTile(c));
+}
+
+function renderProjectTile(c) {
+  const tile = document.createElement('div');
+  tile.className = 'tile';
+  tile.style.background = projectColor(c);
+  tile.onclick = () => { location.hash = `#/c/${encodeURIComponent(c.id)}`; };
+
+  const open = openActionsOf(c.id);
+  const overdue = open.filter(isOverdue).length;
+  const pct = completionOf(c);
+  const status = c.summary || c.goal_or_purpose || '';
+  const last = lastEntryDate(c.id);
+
+  tile.innerHTML = `
+    <div class="tile-top">
+      <span class="tile-emoji">${escHtml(c.emoji || '📁')}</span>
+      <div class="tile-pct"><div class="tile-pct-num">${pct}%</div><div class="tile-pct-lbl">complete</div></div>
+    </div>
+    <div class="tile-title">${escHtml(c.title)}</div>
+    <div class="tile-status">${escHtml(status)}</div>
+    <div class="tile-bottom">
+      <span class="tile-cat">${escHtml(c.category || 'Project')}</span>
+      <span class="tile-open ${open.length ? 'has' : ''}">${open.length ? open.length + ' open' + (overdue ? ' · ' + overdue + ' overdue' : '') : '✓ clear'}</span>
+    </div>
+    <div class="tile-prog-wrap"><div class="tile-prog-fill" style="width:${pct}%"></div></div>
+    <div class="tile-dates">${c.next_meeting ? 'Next: ' + fmtDate(c.next_meeting) : 'No meeting scheduled'}${last ? ' · Last: ' + last : ''}</div>
+  `;
+  return tile;
 }
 
 function renderHomeTagChips() {
@@ -295,11 +538,12 @@ function renderHomeTagChips() {
   }
 }
 
-function filterContainers() {
+function filterContainers(type = null) {
   const q = homeFilters.search;
   const tags = homeFilters.activeTags;
   return state.containers.filter(c => {
     if (c.type === 'inbox') return false; // Inbox lives in its own pinned row.
+    if (type && c.type !== type) return false;
     if (c.status === 'archived') return false;
     if (tags.size && ![...tags].every(t => (c.tags || []).includes(t))) return false;
     if (q) {
@@ -312,23 +556,20 @@ function filterContainers() {
   });
 }
 
+// The secondary list under the project grid: pinned Inbox row + reference
+// files (projects live in the tile grid above).
 function renderHomeBody() {
   const list = document.getElementById('container-list');
   if (!list) return;
   list.innerHTML = '';
 
-  // Pinned Inbox row at the top, always visible.
   list.appendChild(renderInboxRow());
 
-  const items = filterContainers().sort((a, b) => {
+  const items = filterContainers('reference_file').sort((a, b) => {
     const ta = lastTouchedOf(a.id) || a.created_at || '';
     const tb = lastTouchedOf(b.id) || b.created_at || '';
     return tb.localeCompare(ta);
   });
-  if (!items.length) {
-    list.appendChild(tmpl('tpl-empty-home'));
-    return;
-  }
   for (const c of items) list.appendChild(renderContainerRow(c));
 }
 
@@ -436,6 +677,111 @@ function renderRecent() {
   }
 }
 
+// ---------- People view (derived from atom assignees) --------------
+
+function renderPeopleView(body) {
+  const people = derivePeople();
+  if (!people.length) {
+    body.innerHTML = `<div class="empty muted people-empty">
+      No people yet. Assign an action to someone (an action atom's <em>assigned&nbsp;to</em>
+      field) and they'll appear here with their open work across every project.
+    </div>`;
+    return;
+  }
+  if (!ui.personId || !people.find(p => p.name === ui.personId)) ui.personId = people[0].name;
+  const person = people.find(p => p.name === ui.personId);
+
+  const sidebar = `<div class="people-sidebar">
+    <div class="ps-hdr">People (${people.length})</div>
+    ${people.map(p => `
+      <div class="person-row ${p.name === ui.personId ? 'active' : ''}" data-person="${escHtml(p.name)}"
+           style="${p.name === ui.personId ? `border-left:3px solid ${p.color}` : ''}">
+        <div class="person-row-top">
+          <div class="person-init" style="background:${p.color}">${escHtml(initials(p.name))}</div>
+          <div class="person-row-id">
+            <div class="person-name">${escHtml(p.name)}</div>
+            <div class="person-role">${escHtml(p.title || (p.actions.length + ' open'))}</div>
+          </div>
+          ${p.overdueCount ? `<span class="late-badge" style="color:${TONE.r.t};background:${TONE.r.b}">${p.overdueCount} late</span>` : ''}
+        </div>
+        ${(p.pathways || []).map(pw => `<div class="pw-row">
+          <span class="pw-label">${escHtml(pw.label)}</span>
+          <span class="pw-bar">${miniBar(pw.progress, pw.color || p.color, 3)}</span>
+          <span class="pw-val">${pw.progress}%</span>
+        </div>`).join('')}
+      </div>`).join('')}
+  </div>`;
+
+  body.innerHTML = `<div class="people-wrap">${sidebar}${renderPersonDetail(person)}</div>`;
+
+  body.querySelectorAll('[data-person]').forEach(el => {
+    el.onclick = () => { ui.personId = el.dataset.person; ui.personTab = 'actions'; renderHomeView(); };
+  });
+  body.querySelectorAll('[data-ptabperson]').forEach(el => {
+    el.onclick = () => { ui.personTab = el.dataset.ptabperson; renderHomeView(); };
+  });
+  body.querySelectorAll('[data-open-entry]').forEach(el => {
+    el.onclick = () => {
+      const a = state.atoms.find(x => x.id === el.dataset.openEntry);
+      const e = a && state.entries.find(en => en.id === a.entry_id);
+      if (e) { location.hash = `#/c/${encodeURIComponent(e.container_id)}`; setTimeout(() => openEntryDrawer(e.container_id, e.id, a.id), 60); }
+    };
+  });
+}
+
+function renderPersonDetail(person) {
+  const tab = ui.personTab || 'actions';
+  const projChips = person.projectIds.map(id => getContainer(id)).filter(Boolean)
+    .map(c => `<span class="proj-chip" style="background:${projectColor(c)}">${escHtml(c.emoji || '')} ${escHtml(c.title)}</span>`).join('');
+
+  let detail = '';
+  if (tab === 'actions') {
+    const actions = [...person.actions].sort((a, b) => (b.overdue - a.overdue) || (a.atom.due_date || '').localeCompare(b.atom.due_date || ''));
+    detail = actions.length ? actions.map(({ atom, container, overdue }) => `
+      <div class="paction-row">
+        <div class="paction-body">
+          <div>${escHtml(atom.body)}</div>
+          <div class="paction-proj">${escHtml(container.title)}</div>
+        </div>
+        <span class="due-badge" style="color:${overdue ? TONE.r.t : TONE.a.t};background:${overdue ? TONE.r.b : TONE.a.b}">${overdue ? '⚠ Overdue' : (atom.due_date ? 'Due ' + fmtDate(atom.due_date) : 'No date')}</span>
+        <button class="btn tiny" data-open-entry="${escHtml(atom.id)}">Open</button>
+      </div>`).join('') : `<div class="empty muted small">No open actions assigned.</div>`;
+  } else {
+    detail = (person.reports || []).length
+      ? person.reports.map(r => `<div class="report-card" style="border-left:3px solid ${person.color}">
+          <div class="report-top">
+            <div><div class="report-name">${escHtml(r.name)}</div><div class="report-role">${escHtml(r.role || '')}</div></div>
+            <span class="open-badge" style="color:${r.open > 2 ? TONE.r.t : r.open > 0 ? TONE.a.t : TONE.g.t};background:${r.open > 2 ? TONE.r.b : r.open > 0 ? TONE.a.b : TONE.g.b}">${r.open || 0} open</span>
+          </div>
+          ${miniBar(r.progress || 0, person.color)}
+          <div class="report-pct">${r.progress || 0}% overall</div>
+        </div>`).join('')
+      : `<div class="empty muted small">No direct reports recorded for ${escHtml(person.name)}.
+         Reports are optional metadata — add them under <code>people_meta</code> when useful.</div>`;
+  }
+
+  return `<div class="person-detail">
+    <div class="pd-hdr">
+      <div class="pd-init" style="background:${person.color}">${escHtml(initials(person.name))}</div>
+      <div class="pd-id">
+        <div class="pd-name">${escHtml(person.name)}</div>
+        <div class="pd-title">${escHtml(person.title || 'Assignee')}</div>
+        ${(person.pathways || []).map(pw => `<div class="pd-pathway">
+          <span class="pd-pw-label">${escHtml(pw.label)}</span>
+          <span class="pd-pw-bar">${miniBar(pw.progress, pw.color || person.color)}</span>
+          <span class="pd-pw-val" style="color:${pw.color || person.color}">${pw.progress}%</span>
+        </div>`).join('')}
+      </div>
+      <div class="pd-chips">${projChips}</div>
+    </div>
+    <div class="pd-tabs">
+      <button class="pd-tab ${tab === 'actions' ? 'active' : ''}" data-ptabperson="actions">Actions (${person.actions.length})</button>
+      <button class="pd-tab ${tab === 'reports' ? 'active' : ''}" data-ptabperson="reports">Reports (${(person.reports || []).length})</button>
+    </div>
+    <div class="pd-body">${detail}</div>
+  </div>`;
+}
+
 // ---------- Container detail ---------------------------------------
 
 function renderContainer(main, c) {
@@ -474,10 +820,72 @@ function renderContainer(main, c) {
   } else {
     editBtn.onclick = () => openEditContainerModal(c);
   }
-  main.querySelector('[data-act="new-entry"]').onclick = () => openEntryDrawer(c.id, null);
 
+  // Tabs: only projects get the Overview tab; references + inbox go straight
+  // to the entries body (no glidepath/owners to show).
+  const tabs = main.querySelector('#project-tabs');
+  if (c.type === 'project') {
+    tabs.hidden = false;
+    if (ui.projectTab !== 'overview' && ui.projectTab !== 'entries') ui.projectTab = 'overview';
+    tabs.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.onclick = () => { ui.projectTab = btn.dataset.ptab; renderContainerTab(c); };
+    });
+  }
+  renderContainerTab(c);
+}
+
+function renderContainerTab(c) {
+  const body = document.getElementById('project-tabbody');
+  if (!body) return;
+  const tab = c.type === 'project' ? ui.projectTab : 'entries';
+  const tabs = document.getElementById('project-tabs');
+  if (tabs) tabs.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.ptab === tab));
+
+  body.innerHTML = '';
+  if (tab === 'overview') {
+    renderProjectOverview(body, c);
+    return;
+  }
+  body.appendChild(tmpl('tpl-project-entries'));
+  body.querySelector('[data-act="new-entry"]').onclick = () => openEntryDrawer(c.id, null);
   renderEntryStack(c.id);
   renderActionRail(c.id);
+}
+
+function renderProjectOverview(body, c) {
+  const open = openActionsOf(c.id);
+  const pct = completionOf(c);
+  const last = lastEntryDate(c.id);
+  const kpis = [
+    { label: 'Completion', value: pct + '%', tone: toneFor(pct) },
+    { label: 'Open actions', value: open.length, tone: open.length === 0 ? TONE.g : open.length <= 3 ? TONE.a : TONE.r },
+    { label: 'Last entry', value: last || '—', tone: null },
+    { label: 'Next meeting', value: c.next_meeting ? fmtDate(c.next_meeting) : '—', tone: null },
+  ];
+  const glide = renderGlidepath(c.metrics);
+  const owners = c.owners || [];
+
+  body.innerHTML = `
+    <div class="overview">
+      <div class="kpi-grid">${kpis.map(k => `
+        <div class="kpi-card" style="background:${k.tone ? k.tone.b : '#fff'}">
+          <div class="kpi-label" style="color:${k.tone ? k.tone.t : '#5a6070'}">${k.label}</div>
+          <div class="kpi-value" style="color:${k.tone ? k.tone.t : '#1a2744'}">${k.value}</div>
+        </div>`).join('')}
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Glidepath</div>
+        ${glide || `<div class="empty muted small glide-empty">No glidepath yet. Add a metric series under <strong>Edit</strong> to track progress over time.</div>`}
+        ${glide ? `<div class="chart-note">● marker = an intervention recorded at that point</div>` : ''}
+      </div>
+      ${owners.length ? `<div class="owners-block">
+        <div class="sec-label">Owners</div>
+        <div class="owners-row">${owners.map(o => `<div class="owner-card">
+          <div class="owner-init" style="background:${stringColor(o)}">${escHtml(initials(o))}</div>
+          <div class="owner-name">${escHtml(o)}</div>
+        </div>`).join('')}</div>
+      </div>` : ''}
+    </div>`;
 }
 
 function renderEntryStack(containerId) {
@@ -728,6 +1136,11 @@ function renderDrawerInner(entryId) {
         <textarea data-field="notes" placeholder="Optional preamble — context for this entry as a whole.">${escHtml(e.notes || '')}</textarea>
       </label>
 
+      <div class="atomize-row">
+        <button class="btn" data-act="atomize" type="button">✦ Atomize notes</button>
+        <span class="atomize-hint">Propose atoms from the notes and file them into projects.</span>
+      </div>
+
       ${renderAtomSection('observation', 'Observations', 'O', 'o', entryId)}
       ${renderAtomSection('decision',    'Decisions',    'D', 'd', entryId)}
       ${renderAtomSection('action',      'Actions',      'A', 'a', entryId)}
@@ -741,6 +1154,7 @@ function renderDrawerInner(entryId) {
   wireAtomSections(entryId);
 
   drawer.querySelector('.drawer-close').onclick = () => closeDrawer();
+  drawer.querySelector('[data-act="atomize"]').onclick = () => openTriageModal(entryId);
   drawer.querySelector('[data-act="delete-entry"]').onclick = () => {
     if (!confirm('Delete this entry and all of its atoms?')) return;
     state.atoms = state.atoms.filter(a => a.entry_id !== entryId);
@@ -1090,6 +1504,31 @@ function closeModal() {
 
 function escapeModal(ev) { if (ev.key === 'Escape') closeModal(); }
 
+// Metrics editor uses a compact one-series-per-line text format so v1 needs no
+// bespoke widget:  Label | target | 38,41,44,47 | 5:Protocol updated
+function metricsToText(metrics) {
+  return (metrics || []).map(m => {
+    const ivs = (m.interventions || []).map(iv => `${iv.idx}:${iv.label}`).join(';');
+    return [m.label || '', m.target ?? '', (m.data || []).join(','), ivs].join(' | ').replace(/( \| )+$/, '');
+  }).join('\n');
+}
+function textToMetrics(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const [label, target, data, ivs] = line.split('|').map(s => (s || '').trim());
+    const series = { label: label || 'metric' };
+    if (target !== '' && target != null && !isNaN(parseFloat(target))) series.target = parseFloat(target);
+    series.data = (data || '').split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+    series.interventions = (ivs || '').split(';').map(s => s.trim()).filter(Boolean).map(tok => {
+      const [idx, ...rest] = tok.split(':');
+      return { idx: parseInt(idx, 10), label: rest.join(':').trim() };
+    }).filter(iv => !isNaN(iv.idx));
+    if (series.data.length) out.push(series);
+  }
+  return out;
+}
+
 function openNewContainerModal(type, opts = {}) {
   const { presetTitle = '', onCreate } = opts;
   const typeLabel = type === 'project' ? 'project' : 'reference file';
@@ -1097,12 +1536,24 @@ function openNewContainerModal(type, opts = {}) {
   const goalHint  = type === 'project'
     ? 'What does done look like?'
     : 'What is this file for?';
+  const projectExtra = type === 'project' ? `
+    <div class="field-row">
+      <label class="field narrow">
+        <span class="label">Emoji</span>
+        <input type="text" id="m-emoji" maxlength="2" placeholder="📁" />
+      </label>
+      <label class="field">
+        <span class="label">Category</span>
+        <input type="text" id="m-category" placeholder="e.g. Quality Improvement" />
+      </label>
+    </div>` : '';
   openModal(`
     <h2>New ${typeLabel}</h2>
     <label class="field">
       <span class="label">Title</span>
       <input type="text" id="m-title" value="${escHtml(presetTitle)}" autofocus />
     </label>
+    ${projectExtra}
     <label class="field">
       <span class="label">${goalLabel}</span>
       <input type="text" id="m-goal" placeholder="${escHtml(goalHint)}" />
@@ -1128,6 +1579,12 @@ function openNewContainerModal(type, opts = {}) {
         tags: [], status: 'active',
         created_at: nowIso(), updated_at: nowIso(),
       };
+      if (type === 'project') {
+        const emoji = modal.querySelector('#m-emoji')?.value.trim();
+        const category = modal.querySelector('#m-category')?.value.trim();
+        if (emoji) c.emoji = emoji;
+        if (category) c.category = category;
+      }
       state.containers.push(c);
       onCreate?.(c);
       scheduleSave();
@@ -1138,8 +1595,43 @@ function openNewContainerModal(type, opts = {}) {
 }
 
 function openEditContainerModal(c) {
-  const typeLabel = c.type === 'project' ? 'project' : 'reference file';
-  const goalLabel = c.type === 'project' ? 'Goal' : 'Purpose';
+  const isProject = c.type === 'project';
+  const typeLabel = isProject ? 'project' : 'reference file';
+  const goalLabel = isProject ? 'Goal' : 'Purpose';
+  const projectFields = isProject ? `
+    <div class="field-row">
+      <label class="field narrow">
+        <span class="label">Emoji</span>
+        <input type="text" id="m-emoji" maxlength="2" value="${escHtml(c.emoji || '')}" placeholder="📁" />
+      </label>
+      <label class="field narrow">
+        <span class="label">Color</span>
+        <input type="color" id="m-color" value="${escHtml(c.color || projectColor(c))}" />
+      </label>
+      <label class="field">
+        <span class="label">Category</span>
+        <input type="text" id="m-category" value="${escHtml(c.category || '')}" placeholder="e.g. Operations" />
+      </label>
+    </div>
+    <div class="field-row">
+      <label class="field narrow">
+        <span class="label">Completion %</span>
+        <input type="number" id="m-completion" min="0" max="100" value="${typeof c.completion === 'number' ? c.completion : ''}" placeholder="auto" />
+      </label>
+      <label class="field">
+        <span class="label">Next meeting</span>
+        <input type="date" id="m-next" value="${escHtml(c.next_meeting || '')}" />
+      </label>
+    </div>
+    <label class="field">
+      <span class="label">Owners</span>
+      <div class="chips-input" id="m-owners"></div>
+    </label>
+    <label class="field">
+      <span class="label">Glidepath metrics</span>
+      <textarea id="m-metrics" class="metrics-input" placeholder="Label | target | 38,41,44,47 | 5:Protocol updated">${escHtml(metricsToText(c.metrics))}</textarea>
+      <span class="field-hint">One series per line: <code>Label | target | comma,data | idx:intervention</code></span>
+    </label>` : '';
   openModal(`
     <h2>Edit ${typeLabel}</h2>
     <label class="field">
@@ -1158,50 +1650,21 @@ function openEditContainerModal(c) {
       <span class="label">Tags</span>
       <div class="chips-input" id="m-tags"></div>
     </label>
+    ${projectFields}
     <div class="modal-actions">
       <button class="btn danger" data-act="archive">${c.status === 'archived' ? 'Unarchive' : 'Archive'}</button>
       <button class="btn ghost" data-act="cancel">Cancel</button>
       <button class="btn primary" data-act="save">Save</button>
     </div>
   `, (modal) => {
-    const chipsWrap = modal.querySelector('#m-tags');
     const draftTags = [...(c.tags || [])];
-    function refreshChips() {
-      chipsWrap.innerHTML = '';
-      for (const t of draftTags) {
-        const chip = document.createElement('span');
-        chip.className = 'chip';
-        chip.innerHTML = `#${escHtml(t)} <button type="button">×</button>`;
-        chip.querySelector('button').onclick = () => {
-          const idx = draftTags.indexOf(t);
-          if (idx >= 0) draftTags.splice(idx, 1);
-          refreshChips();
-        };
-        chipsWrap.appendChild(chip);
-      }
-      const inp = document.createElement('input');
-      inp.type = 'text';
-      inp.placeholder = 'add tag…';
-      inp.setAttribute('list', 'dl-tags');
-      inp.onkeydown = (ev) => {
-        if (ev.key === 'Enter' || ev.key === ',') {
-          ev.preventDefault();
-          const v = inp.value.trim().replace(/^#/, '');
-          if (v && !draftTags.includes(v)) draftTags.push(v);
-          inp.value = '';
-          refreshChips();
-        }
-      };
-      chipsWrap.appendChild(inp);
-      if (!document.getElementById('dl-tags')) {
-        const dl = document.createElement('datalist');
-        dl.id = 'dl-tags';
-        document.body.appendChild(dl);
-      }
-      document.getElementById('dl-tags').innerHTML =
-        allTags().map(t => `<option value="${escHtml(t)}"></option>`).join('');
+    wireChipEditor(modal.querySelector('#m-tags'), draftTags, { prefix: '#', placeholder: 'add tag…', datalist: 'dl-tags', suggest: allTags });
+
+    let draftOwners = null;
+    if (isProject) {
+      draftOwners = [...(c.owners || [])];
+      wireChipEditor(modal.querySelector('#m-owners'), draftOwners, { placeholder: 'add owner…', datalist: 'dl-participants', suggest: allParticipants });
     }
-    refreshChips();
 
     modal.querySelector('[data-act="cancel"]').onclick = closeModal;
     modal.querySelector('[data-act="archive"]').onclick = () => {
@@ -1217,12 +1680,71 @@ function openEditContainerModal(c) {
       c.goal_or_purpose = modal.querySelector('#m-goal').value.trim();
       c.summary = modal.querySelector('#m-summary').value.trim();
       c.tags = draftTags;
+      if (isProject) {
+        const emoji = modal.querySelector('#m-emoji').value.trim();
+        const color = modal.querySelector('#m-color').value.trim();
+        const category = modal.querySelector('#m-category').value.trim();
+        const completion = modal.querySelector('#m-completion').value.trim();
+        const next = modal.querySelector('#m-next').value.trim();
+        if (emoji) c.emoji = emoji; else delete c.emoji;
+        if (color) c.color = color; else delete c.color;
+        if (category) c.category = category; else delete c.category;
+        if (completion !== '' && !isNaN(parseInt(completion, 10))) c.completion = Math.max(0, Math.min(100, parseInt(completion, 10)));
+        else delete c.completion;
+        if (next) c.next_meeting = next; else delete c.next_meeting;
+        c.owners = draftOwners;
+        c.metrics = textToMetrics(modal.querySelector('#m-metrics').value);
+        if (!c.metrics.length) delete c.metrics;
+      }
       c.updated_at = nowIso();
       scheduleSave();
       closeModal();
       render();
     };
   });
+}
+
+// Reusable chip editor — shared by tags + owners (and any future chip field).
+// Mutates `draft` in place. `suggest` is a function returning a string[].
+function wireChipEditor(wrap, draft, { prefix = '', placeholder = 'add…', datalist, suggest } = {}) {
+  function refresh() {
+    wrap.innerHTML = '';
+    for (const v of draft) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.innerHTML = `${escHtml(prefix + v)} <button type="button" aria-label="Remove">×</button>`;
+      chip.querySelector('button').onclick = () => {
+        const i = draft.indexOf(v);
+        if (i >= 0) draft.splice(i, 1);
+        refresh();
+      };
+      wrap.appendChild(chip);
+    }
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.placeholder = placeholder;
+    if (datalist) inp.setAttribute('list', datalist);
+    inp.onkeydown = (ev) => {
+      if (ev.key === 'Enter' || ev.key === ',') {
+        ev.preventDefault();
+        const v = inp.value.trim().replace(/^#/, '');
+        if (v && !draft.includes(v)) draft.push(v);
+        inp.value = '';
+        refresh();
+      }
+    };
+    wrap.appendChild(inp);
+    if (datalist) {
+      if (!document.getElementById(datalist)) {
+        const dl = document.createElement('datalist');
+        dl.id = datalist;
+        document.body.appendChild(dl);
+      }
+      document.getElementById(datalist).innerHTML =
+        (suggest ? suggest() : []).map(s => `<option value="${escHtml(s)}"></option>`).join('');
+    }
+  }
+  refresh();
 }
 
 function openCloseActionModal(action) {
@@ -1295,6 +1817,336 @@ function openCloseActionModal(action) {
       }
     };
   });
+}
+
+// ---------- Entry triage (AI-assisted ingestion) -------------------
+//
+// Posts the entry's notes to /api/atomize (heuristic stub today, model later),
+// then opens a triage overlay ported from the throughline_entry_triage artifact:
+// proposed atom clusters → assign each to a project (or Inbox / new project) →
+// commit. Commit writes real atoms; atoms fan out to sibling entries when a
+// single capture spans multiple projects.
+
+let triage = null; // working state while the triage overlay is open
+
+const TRIAGE_ATOM = {
+  observation: { lbl: 'OBS', cls: 'o' },
+  decision:    { lbl: 'DEC', cls: 'd' },
+  action:      { lbl: 'ACT', cls: 'a' },
+  outcome:     { lbl: 'OUT', cls: 'u' },
+};
+
+function triageTarget(c, key) {
+  return Object.prototype.hasOwnProperty.call(c.overrides, key) ? c.overrides[key] : c.projectId;
+}
+function triageTotals() {
+  let total = 0, assigned = 0;
+  for (const c of triage.clusters) for (const a of c.atoms) { total++; if (triageTarget(c, a.key)) assigned++; }
+  return { total, assigned };
+}
+
+async function openTriageModal(entryId) {
+  const entry = state.entries.find(e => e.id === entryId);
+  if (!entry) return;
+  if (!(entry.notes || '').trim()) {
+    alert('Add some notes first — the atomizer reads the entry notes.');
+    return;
+  }
+
+  const shroud = document.getElementById('triage-shroud');
+  const panel = document.getElementById('triage');
+  shroud.hidden = false;
+  shroud.onclick = (ev) => { if (ev.target === shroud) closeTriage(); };
+  panel.innerHTML = `<div class="triage-loading">Atomizing notes…</div>`;
+
+  const projList = projects().map(p => ({ id: p.id, title: p.title, tags: p.tags || [], goal_or_purpose: p.goal_or_purpose || '' }));
+
+  let data;
+  try {
+    const r = await fetch('/api/atomize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        entry: { title: entry.title, notes: entry.notes, occurred_at: entry.occurred_at, participants: entry.participants || [] },
+        projects: projList,
+      }),
+    });
+    if (!r.ok) throw new Error(`atomize ${r.status}`);
+    data = await r.json();
+  } catch (err) {
+    panel.innerHTML = `<div class="triage-loading">Atomize failed: ${escHtml(err.message)}<br/><button class="btn" data-act="t-close">Close</button></div>`;
+    panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
+    return;
+  }
+
+  triage = {
+    entryId,
+    source: data.source || 'heuristic',
+    clusters: (data.clusters || []).map((c, ci) => ({
+      id: c.id || 'cl_' + ci,
+      name: c.name || 'Cluster',
+      suggestedId: (c.suggestedId && getContainer(c.suggestedId)) ? c.suggestedId : null,
+      projectId: null,
+      overrides: {},
+      atoms: (c.atoms || []).map((a, ai) => ({ key: `${ci}_${ai}`, type: a.type, body: a.body, owner: a.owner, due: a.due })),
+    })),
+    expanded: {},
+    newForm: {},
+  };
+  renderTriage();
+}
+
+function closeTriage() {
+  const shroud = document.getElementById('triage-shroud');
+  if (shroud) shroud.hidden = true;
+  triage = null;
+}
+
+function renderTriage() {
+  if (!triage) return;
+  const panel = document.getElementById('triage');
+  const entry = state.entries.find(e => e.id === triage.entryId);
+  if (!entry) { closeTriage(); return; }
+  const { total, assigned } = triageTotals();
+  const done = total > 0 && assigned === total;
+  const projs = projects();
+
+  const optionsFor = (cur) => {
+    let opts = `<option value="__none__"${!cur ? ' selected' : ''}>— Unassigned —</option>`;
+    for (const p of projs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
+    opts += `<option value="__new__">+ New project…</option>`;
+    opts += `<option value="__inbox__"${cur === '__inbox__' ? ' selected' : ''}>Inbox only</option>`;
+    return opts;
+  };
+
+  const clustersHTML = triage.clusters.map(c => {
+    const expanded = !!triage.expanded[c.id];
+    const counts = { obs: 0, dec: 0, act: 0 };
+    c.atoms.forEach(a => { if (a.type === 'decision') counts.dec++; else if (a.type === 'action') counts.act++; else counts.obs++; });
+    const targets = c.atoms.map(a => triageTarget(c, a.key));
+    const allAssigned = targets.length > 0 && targets.every(Boolean);
+    const same = allAssigned && new Set(targets).size === 1;
+    const assignedC = same && targets[0] !== '__inbox__' ? getContainer(targets[0]) : null;
+
+    let badge = '';
+    if (same && targets[0] === '__inbox__') badge = `<span class="t-suggest">→ Inbox</span>`;
+    else if (assignedC) badge = `<span class="t-assigned" style="background:${projectColor(assignedC)}">✓ ${escHtml(assignedC.title)}</span>`;
+    else if (allAssigned) badge = `<span class="t-suggest">split across projects</span>`;
+    else if (!c.suggestedId) badge = `<span class="t-orphan">⚠ no matching project</span>`;
+    else { const s = getContainer(c.suggestedId); badge = s ? `<span class="t-suggest" style="color:${projectColor(s)}">AI suggests: ${escHtml(s.title)}</span>` : ''; }
+
+    const pills = [];
+    if (counts.obs) pills.push(`<span class="t-pill o">OBS ${counts.obs}</span>`);
+    if (counts.dec) pills.push(`<span class="t-pill d">DEC ${counts.dec}</span>`);
+    if (counts.act) pills.push(`<span class="t-pill a">ACT ${counts.act}</span>`);
+
+    let control;
+    if (triage.newForm[c.id]) {
+      control = `<div class="t-newform">
+        <input type="text" data-tnew="${escHtml(c.id)}" placeholder="Project name…" value="${escHtml(triage.newForm[c.id] === true ? '' : triage.newForm[c.id])}" />
+        <button class="btn tiny primary" data-tnew-create="${escHtml(c.id)}">Create</button>
+        <button class="btn tiny" data-tnew-cancel="${escHtml(c.id)}">✕</button>
+      </div>`;
+    } else {
+      const accept = (!allAssigned && c.suggestedId)
+        ? `<button class="btn tiny" data-taccept="${escHtml(c.id)}" data-tpid="${escHtml(c.suggestedId)}">Accept →</button>` : '';
+      control = `<div class="t-control">${accept}
+        <select data-tcluster="${escHtml(c.id)}">${optionsFor(c.projectId)}</select></div>`;
+    }
+
+    let atomsHTML = '';
+    if (expanded) {
+      atomsHTML = `<div class="t-atoms">${c.atoms.map(a => {
+        const st = TRIAGE_ATOM[a.type] || TRIAGE_ATOM.observation;
+        const cur = triageTarget(c, a.key);
+        const isOverride = Object.prototype.hasOwnProperty.call(c.overrides, a.key);
+        return `<div class="t-atom${isOverride ? ' override' : ''}">
+          <span class="atom-badge glyph ${st.cls}">${st.lbl}</span>
+          <div class="t-atom-body">${escHtml(a.body)}${a.owner ? `<div class="t-atom-owner">→ ${escHtml(a.owner)}${a.due ? ' · due ' + escHtml(a.due) : ''}</div>` : ''}</div>
+          <select data-tatom="${escHtml(c.id)}" data-takey="${escHtml(a.key)}">${optionsFor(cur)}</select>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    return `<div class="t-cluster${assignedC ? ' assigned' : ''}${(!allAssigned && !c.suggestedId) ? ' orphan' : ''}"${assignedC ? ` style="border-color:${projectColor(assignedC)}"` : ''}>
+      <div class="t-cluster-head" data-ttoggle="${escHtml(c.id)}">
+        <span class="t-toggle">${expanded ? '▼' : '▶'}</span>
+        <div class="t-cluster-meta">
+          <div class="t-cluster-name-row"><span class="t-cluster-name">${escHtml(c.name)}</span>${badge}</div>
+          <div class="t-pills">${pills.join('')}</div>
+        </div>
+        <div class="t-cluster-controls" data-stop>${control}</div>
+      </div>
+      ${atomsHTML}
+    </div>`;
+  }).join('');
+
+  const projChips = projs.map(p => {
+    let n = 0;
+    for (const c of triage.clusters) for (const a of c.atoms) if (triageTarget(c, a.key) === p.id) n++;
+    return `<div class="t-projchip${n ? ' active' : ''}"${n ? ` style="border-color:${projectColor(p)}"` : ''}>
+      <span>${escHtml(p.title)}</span>${n ? `<span class="t-projchip-n" style="background:${projectColor(p)}">${n}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="t-header">
+      <div>
+        <div class="t-eyebrow">Throughline · Entry triage${triage.source === 'heuristic' ? ' · heuristic' : ' · AI'}</div>
+        <div class="t-title">${escHtml(entry.title || '(untitled)')}</div>
+        <div class="t-sub">${fmtDate(entry.occurred_at)}${(entry.participants || []).length ? ' · ' + escHtml(entry.participants.join(', ')) : ''}</div>
+      </div>
+      <div class="t-progress">
+        <div class="t-progress-count${done ? ' done' : ''}">${assigned}/${total}</div>
+        <div class="t-progress-label">atoms assigned</div>
+        <button class="triage-close" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div class="t-body">
+      <div class="t-clusters">${clustersHTML || '<div class="empty muted">Nothing to atomize.</div>'}</div>
+      <div class="t-sidebar">
+        <div class="t-sidebar-label">Projects</div>
+        ${projChips || '<div class="muted small">No projects yet.</div>'}
+        <div class="t-commit">
+          <button class="btn primary ${done ? 'ready' : ''}" data-act="t-commit">${done ? '✓ Commit entry' : 'Commit entry →'}</button>
+          ${total - assigned ? `<div class="t-commit-hint">${total - assigned} unassigned → stay on this entry</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  wireTriage();
+}
+
+function wireTriage() {
+  const panel = document.getElementById('triage');
+  panel.querySelector('.triage-close')?.addEventListener('click', closeTriage);
+  panel.querySelector('[data-act="t-commit"]')?.addEventListener('click', commitTriage);
+
+  panel.querySelectorAll('[data-ttoggle]').forEach(el => {
+    el.addEventListener('click', (ev) => {
+      if (ev.target.closest('[data-stop]')) return; // clicks on the control don't toggle
+      const id = el.dataset.ttoggle;
+      triage.expanded[id] = !triage.expanded[id];
+      renderTriage();
+    });
+  });
+  panel.querySelectorAll('[data-stop]').forEach(el => el.addEventListener('click', e => e.stopPropagation()));
+
+  panel.querySelectorAll('[data-taccept]').forEach(el => {
+    el.addEventListener('click', (ev) => { ev.stopPropagation(); assignTriageCluster(el.dataset.taccept, el.dataset.tpid); });
+  });
+
+  panel.querySelectorAll('[data-tcluster]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const id = sel.dataset.tcluster;
+      const v = sel.value;
+      if (v === '__new__') { triage.newForm[id] = true; renderTriage(); return; }
+      assignTriageCluster(id, v === '__none__' ? null : v);
+    });
+  });
+
+  panel.querySelectorAll('[data-tatom]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      if (v === '__new__') { sel.value = '__none__'; return; } // new-project only at cluster level
+      overrideTriageAtom(sel.dataset.tatom, sel.dataset.takey, v === '__none__' ? null : v);
+    });
+  });
+
+  panel.querySelectorAll('[data-tnew]').forEach(inp => {
+    inp.addEventListener('input', () => { triage.newForm[inp.dataset.tnew] = inp.value; });
+    inp.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') triageCreateProject(inp.dataset.tnew, inp.value);
+      if (ev.key === 'Escape') { delete triage.newForm[inp.dataset.tnew]; renderTriage(); }
+    });
+    inp.focus();
+  });
+  panel.querySelectorAll('[data-tnew-create]').forEach(b => b.addEventListener('click', () => triageCreateProject(b.dataset.tnewCreate, triage.newForm[b.dataset.tnewCreate])));
+  panel.querySelectorAll('[data-tnew-cancel]').forEach(b => b.addEventListener('click', () => { delete triage.newForm[b.dataset.tnewCancel]; renderTriage(); }));
+}
+
+function assignTriageCluster(clusterId, target) {
+  const c = triage.clusters.find(x => x.id === clusterId);
+  if (!c) return;
+  c.projectId = target;
+  c.overrides = {};
+  renderTriage();
+}
+
+function overrideTriageAtom(clusterId, key, target) {
+  const c = triage.clusters.find(x => x.id === clusterId);
+  if (!c) return;
+  if (target === c.projectId) delete c.overrides[key];
+  else c.overrides[key] = target;
+  renderTriage();
+}
+
+function triageCreateProject(clusterId, title) {
+  title = (typeof title === 'string' ? title : '').trim();
+  if (!title) return;
+  const id = uniqueSlug(slugify(title));
+  const c = {
+    id, type: 'project', title, goal_or_purpose: '', summary: '',
+    tags: [], status: 'active', created_at: nowIso(), updated_at: nowIso(),
+  };
+  state.containers.push(c);
+  scheduleSave();
+  delete triage.newForm[clusterId];
+  assignTriageCluster(clusterId, id);
+}
+
+// Commit: resolve every proposed atom to a concrete container, then write.
+// The container holding the most atoms keeps the source entry; atoms bound for
+// other containers fan out into sibling entries cloned from the source.
+function commitTriage() {
+  if (!triage) return;
+  const entry = state.entries.find(e => e.id === triage.entryId);
+  if (!entry) { closeTriage(); return; }
+  const source = entry.container_id;
+
+  const byTarget = new Map();
+  for (const c of triage.clusters) {
+    for (const a of c.atoms) {
+      let t = triageTarget(c, a.key);
+      if (!t) t = source;                          // unassigned → stay with source
+      else if (t === '__inbox__') t = getOrCreateInbox().id;
+      if (!byTarget.has(t)) byTarget.set(t, []);
+      byTarget.get(t).push(a);
+    }
+  }
+  if (!byTarget.size) { closeTriage(); return; }
+
+  let dominant = source, best = -1;
+  for (const [t, atoms] of byTarget) if (atoms.length > best) { best = atoms.length; dominant = t; }
+
+  const makeAtom = (a, entryId) => {
+    const atom = { id: uid(), entry_id: entryId, kind: a.type, body: a.body, tags: [], created_at: nowIso(), updated_at: nowIso() };
+    if (a.type === 'action') { atom.assigned_to = a.owner || ''; atom.due_date = a.due || ''; }
+    return atom;
+  };
+
+  // Source entry → dominant container.
+  entry.container_id = dominant;
+  entry.updated_at = nowIso();
+  for (const a of (byTarget.get(dominant) || [])) state.atoms.push(makeAtom(a, entry.id));
+
+  // Sibling entries for every other target.
+  for (const [t, atoms] of byTarget) {
+    if (t === dominant) continue;
+    const sib = {
+      id: uid(), container_id: t, kind: entry.kind, occurred_at: entry.occurred_at,
+      title: entry.title, participants: [...(entry.participants || [])], tags: [...(entry.tags || [])],
+      notes: '', created_at: nowIso(), updated_at: nowIso(),
+    };
+    state.entries.push(sib);
+    for (const a of atoms) state.atoms.push(makeAtom(a, sib.id));
+  }
+
+  scheduleSave();
+  closeTriage();
+  closeDrawer(true);
+  location.hash = `#/c/${encodeURIComponent(dominant)}`;
+  render();
 }
 
 // ---------- Boot ---------------------------------------------------

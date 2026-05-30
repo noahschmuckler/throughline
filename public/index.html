@@ -38,10 +38,18 @@
       <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
     </div>
 
+    <!-- Triage overlay (AI-assisted ingestion: clusters → projects → commit). -->
+    <div class="triage-shroud" id="triage-shroud" hidden>
+      <div class="triage" id="triage" role="dialog" aria-modal="true" aria-label="Entry triage"></div>
+    </div>
+
     <template id="tpl-home">
       <section class="home">
         <div class="home-head">
-          <h1 class="display">What are we working on?</h1>
+          <div class="home-head-left">
+            <h1 class="display">What are we working on?</h1>
+            <div class="summary-bar" id="home-summary"></div>
+          </div>
           <div class="home-actions">
             <button class="btn primary" data-act="new-project">
               New project
@@ -54,6 +62,16 @@
             </button>
           </div>
         </div>
+        <div class="view-toggle" id="home-view-toggle" role="tablist">
+          <button class="vtbtn" data-view="projects">▦&nbsp; Projects</button>
+          <button class="vtbtn" data-view="people">People</button>
+        </div>
+        <div id="home-view-body"></div>
+      </section>
+    </template>
+
+    <template id="tpl-home-projects">
+      <div class="home-projects">
         <div class="home-filters">
           <input
             type="search"
@@ -63,10 +81,12 @@
           />
           <div class="tag-chips" id="home-tag-chips"></div>
         </div>
+        <div class="tile-grid" id="project-grid"></div>
+        <h2 class="section-rule">Inbox &amp; reference files</h2>
         <div class="container-list" id="container-list"></div>
         <h2 class="section-rule">Recent activity</h2>
         <div class="recent-list" id="recent-list"></div>
-      </section>
+      </div>
     </template>
 
     <template id="tpl-project">
@@ -84,30 +104,38 @@
             <div class="prose" id="project-summary-body"></div>
           </details>
           <div class="project-head-actions">
+            <div class="tab-group" id="project-tabs" hidden>
+              <button class="tab-btn" data-ptab="overview">Overview</button>
+              <button class="tab-btn" data-ptab="entries">Entries</button>
+            </div>
             <button class="btn ghost" data-act="edit-project">Edit</button>
           </div>
         </div>
 
-        <div class="project-body">
-          <div class="entry-pane">
-            <div class="entry-pane-head">
-              <h2>Entries</h2>
-              <button class="btn primary" data-act="new-entry">
-                New entry
-              </button>
-            </div>
-            <div class="entry-stack" id="entry-stack"></div>
-          </div>
-
-          <aside class="action-rail">
-            <div class="rail-head">
-              <h2>Open actions</h2>
-              <div class="rail-counters" id="rail-counters"></div>
-            </div>
-            <div class="rail-list" id="rail-list"></div>
-          </aside>
-        </div>
+        <div id="project-tabbody"></div>
       </section>
+    </template>
+
+    <template id="tpl-project-entries">
+      <div class="project-body">
+        <div class="entry-pane">
+          <div class="entry-pane-head">
+            <h2>Entries</h2>
+            <button class="btn primary" data-act="new-entry">
+              New entry
+            </button>
+          </div>
+          <div class="entry-stack" id="entry-stack"></div>
+        </div>
+
+        <aside class="action-rail">
+          <div class="rail-head">
+            <h2>Open actions</h2>
+            <div class="rail-counters" id="rail-counters"></div>
+          </div>
+          <div class="rail-list" id="rail-list"></div>
+        </aside>
+      </div>
     </template>
 
     <template id="tpl-empty-home">
