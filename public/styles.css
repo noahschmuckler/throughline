@@ -1364,3 +1364,16 @@ main { padding-top: 0; }
 h1, h2, h3, h4, .hdr-title, .panel-title, .tile-title, .kpi-value, .pd-name, .t-title {
   font-variation-settings: normal; font-weight: 400;
 }
+
+/* Ingestion affordances — import button + drag-drop. */
+.home-actionbar { align-items: center; }
+.actionbar-sep { width: 1px; height: 22px; background: var(--paper-edge); margin: 0 4px; }
+.actionbar-hint { font-size: 0.75rem; color: var(--mute); margin-left: 2px; }
+.home.drag-over { outline: 2px dashed var(--teal); outline-offset: -10px; border-radius: 10px; }
+.home.drag-over::after {
+  content: "Drop to import as a new Inbox entry";
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(26,39,68,0.55); color: #fff;
+  font-family: var(--display); font-size: 1.4rem; pointer-events: none;
+}

@@ -422,6 +422,29 @@ function renderHome(main) {
     () => openNewContainerModal('reference_file');
   main.querySelector('[data-act="new-adhoc"]').onclick =
     () => openAdHocEntryDrawer();
+  main.querySelector('[data-act="import-file"]').onclick =
+    () => openFileImport();
+
+  // Drag-and-drop a Markdown/text file anywhere on the dashboard → ingest it.
+  const section = main.querySelector('.home');
+  section.addEventListener('dragover', (ev) => {
+    if (!ev.dataTransfer?.types?.includes('Files')) return;
+    ev.preventDefault();
+    section.classList.add('drag-over');
+  });
+  section.addEventListener('dragleave', (ev) => {
+    if (ev.target === section) section.classList.remove('drag-over');
+  });
+  section.addEventListener('drop', (ev) => {
+    if (!ev.dataTransfer?.files?.length) return;
+    ev.preventDefault();
+    section.classList.remove('drag-over');
+    const f = [...ev.dataTransfer.files].find(
+      f => /\.(md|markdown|txt|text)$/i.test(f.name) || /^text\//.test(f.type)
+    );
+    if (f) importTextFile(f);
+    else alert('Drop a Markdown or text file (.md / .txt).');
+  });
 
   renderHomeSub();
   wireViewToggle();
@@ -1028,6 +1051,66 @@ function renderRailItem(action) {
 function openAdHocEntryDrawer() {
   const inbox = getOrCreateInbox();
   openEntryDrawer(inbox.id, null);
+}
+
+// File-import path: pick a .md/.txt (e.g. an extracted .loop AI summary), drop
+// its text into a fresh Inbox entry's notes, and open the drawer so the user
+// can hit "Atomize notes" → triage. Works the same on the Linux test box and
+// the orange Windows box (standard browser file picker; OneDrive files appear
+// in the OS dialog). Drag-and-drop on the dashboard routes here too.
+function openFileImport() {
+  let input = document.getElementById('md-file-input');
+  if (!input) {
+    input = document.createElement('input');
+    input.type = 'file';
+    input.id = 'md-file-input';
+    input.accept = '.md,.markdown,.txt,.text,text/markdown,text/plain';
+    input.hidden = true;
+    document.body.appendChild(input);
+  }
+  input.value = '';
+  input.onchange = () => { const f = input.files && input.files[0]; if (f) importTextFile(f); };
+  input.click();
+}
+
+// First markdown heading → title; else first non-empty line; else filename.
+function titleFromMarkdown(text, filename) {
+  const lines = String(text || '').split(/\r?\n/);
+  for (const l of lines) {
+    const h = l.match(/^\s{0,3}#{1,3}\s+(.+?)\s*#*\s*$/);
+    if (h) return h[1].trim().slice(0, 140);
+  }
+  for (const l of lines) {
+    const t = l.trim().replace(/^#+\s*/, '');
+    if (t) return t.slice(0, 140);
+  }
+  return (filename || 'Imported note').replace(/\.[^.]+$/, '');
+}
+
+function importTextFile(file) {
+  const reader = new FileReader();
+  reader.onerror = () => alert('Could not read that file.');
+  reader.onload = () => {
+    const text = String(reader.result || '');
+    const inbox = getOrCreateInbox();
+    const e = {
+      id: uid(),
+      container_id: inbox.id,
+      kind: 'meeting',          // .loop summaries are meeting recaps
+      occurred_at: nowIso(),
+      title: titleFromMarkdown(text, file.name),
+      participants: [],
+      tags: [],
+      notes: text,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    state.entries.push(e);
+    scheduleSave();
+    // Land in the drawer with notes pre-filled — one click from "Atomize notes".
+    openEntryDrawer(inbox.id, e.id);
+  };
+  reader.readAsText(file);
 }
 
 function openEntryDrawer(containerId, entryId, scrollToAtomId = null) {
