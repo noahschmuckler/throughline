@@ -21,14 +21,45 @@ Snapshot date: 2026-05-30.
   display. PR open at
   github.com/noahschmuckler/throughline/pull/new/adhoc-inbox.
 - `system-ui-and-triage` (current) — unmerged, branched off
-  `adhoc-inbox`. The big one: the project **dashboard** (tile grid +
-  glidepath + People view), the **entry triage** ingestion modal, a
-  schema bump to **v2**, and a second backend (**Node server** over a
-  JSON file) so the stack can run locally on orange device against a
-  OneDrive-backed DB. See the new sections below.
+  `adhoc-inbox`. The big one. **NOT pushed yet** (local only — the user
+  said don't push). As of this snapshot it is 4 commits ahead of
+  `adhoc-inbox`:
+  1. dashboard (tile grid + glidepath + People view) + entry triage
+     modal + schema **v2** + the **Node server** backend.
+  2. real atomizer providers — `anthropic` + `cdsapi` (orange).
+  3. reskin to the playground look (navy header, DM fonts) + demo
+     glidepath/owner data.
+  4. ingestion surface — **Import .md / drag-drop** a Markdown file.
 
 Each branch stacks on the previous. Verify what a branch actually adds
 with `git log main..HEAD --oneline` before reading the diff.
+
+## Running it / seeing it right now (for a cold start)
+
+Two ways to run the SAME app locally; pick one.
+
+- **Node (orange-shape)**: `node server.js` → `http://127.0.0.1:8787`
+  (override `PORT`). State in `./data/state.json` (gitignored).
+- **Cloudflare local**: `npx wrangler dev` → also `:8787`, runtime is
+  `workerd`, state in the **preview KV**.
+
+Heads-up: a `wrangler dev` (`workerd`) instance is often **already
+running on 8787** from a prior session — `node server.js` will then fail
+with `EADDRINUSE`. That's not a bug; just open the browser to
+`http://127.0.0.1:8787`, or run Node on another port
+(`PORT=8799 node server.js`). Identify the holder with
+`ss -ltnp | grep 8787` (`workerd` = wrangler, `node` = our server).
+
+To load the demo (incl. glidepaths): `node scripts/seed.mjs --url
+http://127.0.0.1:<port> --force`. After editing `public/*`, the user
+must hard-refresh (Ctrl+Shift+R) to bust the browser cache.
+
+Verification without a real browser: `--screenshot` / `--dump-dom` via
+`google-chrome --headless=new` works in this env; opening a
+**remote-debugging port does NOT** (sandbox kills it), so CDP driving
+is out. To exercise a click-only surface (triage, import), temporarily
+add a boot-time hook reading a `?…=1` query param, screenshot, then
+remove it (this is how triage + import were verified).
 
 ## Deployment model — the important quirk
 
@@ -115,8 +146,10 @@ node scripts/seed.mjs --target prod --url https://<deployed-url>   # cloud
 node scripts/seed.mjs --force                                      # reseed
 ```
 
-The preview KV currently has the seeded demo data (was populated via
-the preview worker URL). Production KV is whatever was there
+The preview KV currently has the seeded demo data **including the v2
+glidepath metrics / owners / completion** on the 3 demo projects (added
+on this branch so the local test box shows curves). The `wrangler dev`
+instance on `:8787` serves it. Production KV is whatever was there
 beforehand — by snapshot date that's just one leftover `smoke_5` test
 container.
 
@@ -212,6 +245,24 @@ handled, everything else is static assets).
   several projects the source entry goes to the **dominant** target and
   the rest fan out into **sibling entries** cloned from it. Manual atom
   entry remains the always-available path.
+- **File import (ingestion entry point)**: dashboard "⤓ Import .md…"
+  button → `openFileImport()`, and drag-drop on `.home` → both call
+  `importTextFile(file)`. It reads the file (FileReader), makes a
+  `kind:'meeting'` Inbox entry (title via `titleFromMarkdown()` = first
+  `#` heading / first line / filename, body → `notes`), and opens the
+  drawer one click from Atomize. Standard browser picker → works on
+  orange (OneDrive files show in the OS dialog); no server upload.
+- **Visual theme (playground look)**: the shell is a **dark navy header
+  zone** — a persistent `.hdr-top` (teal "Throughline" badge + meta +
+  save status) plus a per-view dark band: `.hdr-main` on home (DM-serif
+  title + sub line + the `.view-toggle`) and `.panel-hdr` on a container
+  (back + emoji + title + tabs + Edit). Those dark bands use negative
+  side margins (`margin: 0 -32px`) to span the centered column and line
+  up with `.hdr-top`. Fonts are **DM Serif Display / DM Sans** (set in
+  `:root --display/--sans`; the `font-variation-settings` reset near the
+  end of `styles.css` neutralizes leftover Fraunces opsz tweaks). Tiles
+  are colorful (project `color` or a hashed fallback) with white text;
+  everything below the header is the light editorial surface.
 
 ## Known gaps / things deferred
 
