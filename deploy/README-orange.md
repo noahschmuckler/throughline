@@ -29,6 +29,50 @@ before the other person makes big changes, and keep an eye out for
 `state-<name>'s conflicted copy.json` files. A proper shared backend is a future
 upgrade; for v1 the OneDrive share is the deliberate, low-friction choice.
 
+## Install path A — git clone + sync (preferred)
+
+If the repo is cloned on the orange box via GitHub Desktop (e.g.
+`C:\Users\<you>\Documents\GitHub\throughline\`), run it **in place** — no file
+copying, and "update" is just *Sync* in GitHub Desktop.
+
+1. **Sync** in GitHub Desktop so the clone has the latest `main`/branch
+   (you need the `deploy/` folder + V1 code).
+2. Open **PowerShell** in the clone and register the auto-start task:
+   ```powershell
+   cd C:\Users\<you>\Documents\GitHub\throughline
+   powershell -ExecutionPolicy Bypass -File deploy\register-task.ps1
+   ```
+   It creates `.env` from `.env.example` (if missing), registers the
+   `ThroughlineServer` logon task pointing at the clone, and starts it.
+3. Edit `.env` in the clone — set `THROUGHLINE_DB` to your OneDrive path and
+   `LLM_PROVIDER=cdsapi` (see "Configure" below) — then restart:
+   ```powershell
+   Stop-ScheduledTask -TaskName ThroughlineServer ; Start-ScheduledTask -TaskName ThroughlineServer
+   ```
+4. Open `http://127.0.0.1:8787`.
+
+**Just want to see it run once (no scheduled task)?**
+```powershell
+cd C:\Users\<you>\Documents\GitHub\throughline
+copy .env.example .env      # then edit .env
+node --env-file=.env server.js
+```
+Browse to `http://127.0.0.1:8787`; Ctrl+C to stop.
+
+**To update later:** GitHub Desktop → *Sync*, then restart the task (step 3's
+restart line). `.env` and your OneDrive state are never touched by a sync —
+`.env` and `data/` are gitignored.
+
+> Note: `register-task.ps1` requires **Node 20.6+** (the task launches with
+> `--env-file`). It checks and tells you if Node is too old.
+
+## Install path B — zip bundle (no git on the box)
+
+Use this only if the orange box has no git/GitHub Desktop. `bash deploy/bundle.sh`
+on the Linux box produces `dist/throughline-<sha>.zip` + an installer that copies
+the bundle into `%USERPROFILE%\throughline\`. Steps are further down under
+"Install (zip bundle)". For the clone workflow, ignore path B.
+
 ## Prerequisites (one-time, per machine)
 
 - **Node 20.6+** on PATH (`node --version`). 20.6+ is required for the
@@ -57,7 +101,7 @@ Outputs in `dist/`:
 Get both files onto the orange box however you normally do (synced folder, or
 the tailscale → iPhone → OneDrive flow). They must land in the same folder.
 
-## Install (on the orange box)
+## Install (zip bundle)
 
 1. Save both files into e.g. `%USERPROFILE%\throughline-deploy\`.
 2. Rename `install-throughline-<sha>.ps1.txt` → `install-throughline-<sha>.ps1`.
