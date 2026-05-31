@@ -12,12 +12,13 @@
 // ------------------------------------------------------------------
 
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { dirname, join, extname } from 'node:path';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { readState, writeState, dbPath } from './lib/store.js';
 import { atomizeEntry } from './shared/atomize.js';
+import { classifyProject } from './shared/classify.js';
 import { makeLLMCall } from './shared/llm.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -100,11 +101,79 @@ async function handleAtomize(req, res) {
   }
 }
 
+async function handleClassify(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  let body;
+  try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+  const input = {
+    description: typeof body?.description === 'string' ? body.description : '',
+    excerpt: typeof body?.excerpt === 'string' ? body.excerpt : '',
+    answers: body?.answers && typeof body.answers === 'object' ? body.answers : {},
+  };
+  try {
+    const result = await classifyProject(input, { llmCall });
+    return sendJson(res, 200, result);
+  } catch (err) {
+    return sendJson(res, 500, { error: err.message });
+  }
+}
+
+// Attachments live in an `attachments/<container_id>/` tree beside the state
+// JSON (so on orange they sit in the same OneDrive folder, legible to anyone).
+// The server only handles file BYTES; the client owns state and records the
+// attachment in container.attachments[] itself (avoids state races).
+const ATTACH_DIR = join(dirname(dbPath()), 'attachments');
+const safeName = (s) => basename(String(s || 'file')).replace(/[^\w.\-]+/g, '_').slice(0, 120) || 'file';
+const MAX_ATTACH_BYTES = 15 * 1024 * 1024;
+
+async function handleAttachmentUpload(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  let body;
+  try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+  const cid = safeName(body?.container_id);
+  const filename = safeName(body?.filename);
+  const b64 = String(body?.data || '').replace(/^data:[^;]*;base64,/, '');
+  if (!body?.container_id || !filename || !b64) return sendJson(res, 400, { error: 'container_id, filename, data required' });
+  const buf = Buffer.from(b64, 'base64');
+  if (buf.length > MAX_ATTACH_BYTES) return sendJson(res, 413, { error: 'file too large (max 15MB)' });
+  try {
+    const dir = join(ATTACH_DIR, cid);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, filename), buf);
+    return sendJson(res, 200, {
+      id: filename,
+      filename,
+      mime: typeof body.mime === 'string' ? body.mime : 'application/octet-stream',
+      added_at: new Date().toISOString(),
+      url: `/api/attachments/${encodeURIComponent(cid)}/${encodeURIComponent(filename)}`,
+    });
+  } catch (err) {
+    return sendJson(res, 500, { error: err.message });
+  }
+}
+
+async function serveAttachment(req, res, pathname) {
+  const parts = pathname.split('/').slice(3).map(decodeURIComponent); // after /api/attachments/
+  const cid = safeName(parts[0]); const name = safeName(parts[1]);
+  if (!cid || !name) return sendJson(res, 404, { error: 'not found' });
+  try {
+    const buf = await readFile(join(ATTACH_DIR, cid, name));
+    const mime = MIME[extname(name).toLowerCase()] || 'application/octet-stream';
+    res.writeHead(200, { 'content-type': mime, 'content-disposition': `inline; filename="${name}"` });
+    return res.end(buf);
+  } catch {
+    return sendJson(res, 404, { error: 'not found' });
+  }
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     if (url.pathname === '/api/state') return await handleState(req, res);
     if (url.pathname === '/api/atomize') return await handleAtomize(req, res);
+    if (url.pathname === '/api/classify') return await handleClassify(req, res);
+    if (url.pathname === '/api/attachments') return await handleAttachmentUpload(req, res);
+    if (url.pathname.startsWith('/api/attachments/')) return await serveAttachment(req, res, url.pathname);
     return await serveStatic(req, res, url.pathname);
   } catch (err) {
     console.error(err);

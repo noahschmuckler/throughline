@@ -49,6 +49,7 @@
           <div class="hdr-main-left">
             <h1 class="hdr-title">Project dashboard</h1>
             <div class="hdr-sub" id="home-sub"></div>
+            <div class="hdr-rag" id="home-rag"></div>
           </div>
           <div class="view-toggle" id="home-view-toggle" role="tablist">
             <button class="vtbtn" data-view="projects">▦&nbsp; Projects</button>
@@ -56,7 +57,8 @@
           </div>
         </div>
         <div class="home-actionbar">
-          <button class="btn primary" data-act="new-project">New project</button>
+          <button class="btn primary" data-act="new-project-guided">✦ New project</button>
+          <button class="btn" data-act="new-program">New program</button>
           <button class="btn" data-act="new-reference-file">New reference file</button>
           <span class="actionbar-sep" aria-hidden="true"></span>
           <button class="btn" data-act="new-adhoc">✎ Ad-hoc note</button>
@@ -109,6 +111,7 @@
             <summary>Summary</summary>
             <div class="prose" id="project-summary-body"></div>
           </details>
+          <div class="attachments" id="project-attachments"></div>
         </div>
 
         <div id="project-tabbody"></div>

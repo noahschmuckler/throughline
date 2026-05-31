@@ -63,6 +63,13 @@ export function buildDemoData(now = new Date()) {
       ...(c.owners ? { owners: c.owners } : {}),
       ...(c.next_meeting ? { next_meeting: c.next_meeting } : {}),
       ...(c.metrics ? { metrics: c.metrics } : {}),
+      // Optional v3 fields — program tier, framework, RAG, OKR objective/KRs.
+      ...(c.program_id ? { program_id: c.program_id } : {}),
+      ...(c.framework ? { framework: c.framework } : {}),
+      ...(c.framework_config ? { framework_config: c.framework_config } : {}),
+      ...(c.rag ? { rag: c.rag } : {}),
+      ...(c.objective ? { objective: c.objective } : {}),
+      ...(c.key_results ? { key_results: c.key_results } : {}),
       created_at: c.created_at || offsetIso(-120, 9, 0),
       updated_at: c.updated_at || offsetIso(0, 17, 0),
     });
@@ -117,9 +124,30 @@ export function buildDemoData(now = new Date()) {
   // Overdue action lives here: "Send Acme termination clause request",
   // due Wednesday, still open Friday.
   // ==================================================================
+  // ==================================================================
+  // PROGRAM: Vendor & systems modernization — groups the payroll and CRM
+  // projects under one strategic objective with OKR-style key results.
+  // ==================================================================
+  pushContainer({
+    id: 'demo_program_modernization',
+    type: 'program',
+    title: 'Vendor & systems modernization',
+    goal_or_purpose: '',
+    summary: 'Tighten our back-office vendor stack and migrate the CRM before Q3, without dropping data or service.',
+    objective: 'Modernize the back-office vendor stack (payroll + CRM) before Q3 with no data loss and lower run-cost.',
+    key_results: [
+      { id: 'kr_cost', label: 'Annual vendor run-cost', current: 100, target: 92, unit: '% of today' },
+      { id: 'kr_crm', label: 'CRM migration progress', current: 57, target: 100, unit: '%' },
+      { id: 'kr_decisions', label: 'Vendor decisions locked', current: 1, target: 2, unit: '' },
+    ],
+    tags: ['q2', 'vendor'],
+    created_at: offsetIso(-30, 9, 0),
+  });
+
   pushContainer({
     id: 'demo_payroll_renewal',
     type: 'project',
+    program_id: 'demo_program_modernization',
     emoji: '💸',
     color: '#b05a2a',
     category: 'Finance',
@@ -424,6 +452,7 @@ export function buildDemoData(now = new Date()) {
   pushContainer({
     id: 'demo_crm_cutover',
     type: 'project',
+    program_id: 'demo_program_modernization',
     emoji: '🔁',
     color: '#2e7dbd',
     category: 'Technology',

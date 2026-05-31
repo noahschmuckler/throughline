@@ -96,9 +96,17 @@ the **same** API (`GET/PUT /api/state`, `POST /api/atomize`):
   `./data/state.json`, gitignored). Run with `npm start` (`node
   server.js`), default `http://127.0.0.1:8787`. **On orange, point
   `THROUGHLINE_DB` at a file inside a OneDrive shared folder** so the
-  dyad shares one project DB — this is the production target; deploy it
-  the way atom_sandbox does (logon scheduled task; see
-  `~/GitHub_Repos/atom_sandbox/deploy/`). Config via `.env.example`.
+  dyad shares one project DB — this is the production target. **Deploy kit
+  lives in `deploy/`** (mirrors atom_sandbox): `bash deploy/bundle.sh` →
+  `dist/throughline-<sha>.zip` + `install-throughline-<sha>.ps1.txt`; the
+  installer registers a `ThroughlineServer` logon scheduled task that runs
+  `node --env-file=.env server.js` on **:8787**. No `node_modules` to vendor
+  (server has zero runtime deps). `deploy/README-orange.md` is the operator
+  guide — note the shared-OneDrive last-write-wins caveat (each dyad member
+  runs their own local server, both pointing `THROUGHLINE_DB` at the same
+  synced OneDrive `state.json`; attachments land in `…/attachments/` beside
+  it). Orange ships **blank** — do not bundle/run the seeder. Config via
+  `.env.example` (set `THROUGHLINE_DB` + `LLM_PROVIDER=cdsapi`).
 
 The front-end is byte-for-byte identical against either backend — it
 only speaks REST. Writes are atomic-ish (tmp + rename) in `lib/store.js`.
@@ -129,10 +137,30 @@ of the reply (handles ```` ```json ```` fences / surrounding prose); a
 bad/empty reply degrades to the heuristic rather than 500-ing. Remaining
 model-quality work is marked `// TODO(AI)`.
 
+**Second AI seam — project classifier (`shared/classify.js`, v3).** Same
+runtime-agnostic shape, same provider seam. `/api/classify` (in BOTH
+backends) runs `classifyProject({description, excerpt, answers}, {llmCall})`
+and returns `{framework, reason, suggested_phases_or_states[],
+suggested_metric, is_program, if_program_subprojects[], first_action,
+source}`. It powers the **guided shape wizard** (home "✦ New project" →
+`openProjectWizard`): two plain-English radio questions (+ a conditional
+"do you know the measure?" + description + optional pasted excerpt) →
+classify → an **editable** recommendation preview (`openProjectRecommendation`)
+→ `provisionFromRecommendation` creates the project with its `framework` +
+seeds a first open-action atom (`seedFirstAction`). Like atomize, a
+bad/empty model reply **degrades to a deterministic heuristic** (maps the
+wizard answers/keywords → framework, and flags a *program* when a long
+description spans ≥2 workstream domains) — so the wizard works at zero
+spend with no key. The "no defined end" wizard answer routes to a
+**reference file**, not a project. Full program (multi-subproject)
+provisioning is the D-phase follow-up; until then a program recommendation
+creates one project.
+
 ## Demo data
 
-`scripts/seed.mjs` populates 6 containers (3 projects + 3 reference
-files) with ~42 entries and ~95 atoms spanning a "busy week" centered
+`scripts/seed.mjs` populates 7 containers (1 program + 3 projects + 3
+reference files; the program groups the payroll + CRM projects via
+`program_id`) with ~42 entries and ~95 atoms spanning a "busy week" centered
 on the Friday of the run week. Dates are computed relative to "now" so
 re-running keeps the demo fresh. All demo containers have ids prefixed
 `demo_`; the runner refuses to clobber existing demo data without
@@ -169,19 +197,32 @@ hash-routed) and `src/index.js` (Worker stub; only `/api/state` is
 handled, everything else is static assets).
 
 - **State doc** (KV key `throughline:state`, or the Node JSON file):
-  `{ schema_version: 2, containers[], entries[], atoms[], people_meta{} }`.
-  **v2 is backward-compatible**: both backends + `normalizeState` in
-  `public/app.js` tolerate v1 docs (default the missing fields) and
-  preserve unknown keys on write.
+  `{ schema_version: 3, containers[], entries[], atoms[], people_meta{} }`.
+  **v3 is backward-compatible** (as v2 was): both backends + `normalizeState`
+  in `public/app.js` tolerate v1/v2 docs (default the missing fields) and
+  preserve unknown keys on write. The two backends bump the version number
+  only — their `...spread` passes container inner-fields through untouched,
+  so the v3 container fields survive a round-trip; the front-end
+  `normalizeContainer` (in `public/app.js`) is what defaults any missing v3
+  fields on read, so render code can rely on the shape.
 - **`containers[]`**: `{ id, type, title, goal_or_purpose, summary,
   tags[], status, created_at, updated_at }` where `type` is one of
-  `'project' | 'reference_file' | 'inbox'`. Inbox is a singleton with
-  id `'inbox'`, lazy-created on first ad-hoc capture. **Projects gained
-  optional v2 metadata**: `emoji, color, category, completion (0–100),
+  `'program' | 'project' | 'reference_file' | 'inbox'`. Inbox is a singleton
+  with id `'inbox'`, lazy-created on first ad-hoc capture. **v3 added the
+  `program` type** (a strategic container above projects) and these optional
+  fields: on **every** container `program_id` (string|null — links a
+  project/reference to its parent program; null = standalone) and `rag`
+  (`'green'|'amber'|'red'|null`; null = derive); on **projects** `framework`
+  (`'kanban'|'pdsa'|'milestone'|'timeline'|null`) + `framework_config` (object,
+  shape depends on the framework — see the `FRAMEWORKS` registry in
+  `public/app.js`); on **programs** `objective` (string) + `key_results[]`
+  (`{id,label,target,current,unit}`). **Projects gained optional v2
+  metadata** (still present): `emoji, color, category, completion (0–100),
   owners[], next_meeting (YYYY-MM-DD), metrics[]` where each metric is
   `{ label, target, color, data:number[], interventions:[{idx,label}] }`
   (drives the glidepath). All optional — absent on references/inbox and
-  on lean projects.
+  on lean projects. A legacy project with `framework:null` renders exactly
+  as it did pre-v3.
 - **`people_meta`**: `{ [name]: { title, color, pathways[], reports[] } }`
   — optional overlay. People themselves are **derived** from atom
   `assigned_to` (see `derivePeople()`); `people_meta` only adds the
@@ -199,9 +240,16 @@ handled, everything else is static assets).
 
 ## Patterns worth knowing before changing things
 
-- **Type-label central lookup**: `CONTAINER_LABELS` in `public/app.js`.
-  Adding a fourth container type is one row there plus styling for the
-  matching `.type-mark.<cls>` and `.type-badge.<cls>` rules.
+- **Type-label central lookup**: `CONTAINER_LABELS` in `public/app.js`
+  (now `program | project | reference_file | inbox`). Adding a container
+  type is one row there plus styling for the matching `.type-mark.<cls>`
+  and `.type-badge.<cls>` rules.
+- **Framework registry**: `FRAMEWORKS` in `public/app.js` is the single
+  source of truth for the PM-framework templates (kanban/pdsa/milestone/
+  timeline) — each holds a plain-English `label` (shown in pickers; NO
+  jargon in required flows), an optional `blurb` (post-selection help),
+  `metricFields`, and `defaultConfig()` (seeds a project's
+  `framework_config` on selection). Helpers: `frameworkLabel/Blurb/ConfigFor`.
 - **Drawer flow**: `openEntryDrawer(containerId, entryId)`. If
   `entryId` is null, a fresh entry is pushed into state at
   `containerId`. The drawer's container picker lets entries be
@@ -225,14 +273,64 @@ handled, everything else is static assets).
   uses the stored `completion` or, absent it, derives closed/total
   actions — so a fresh project still shows a meaningful bar.
 - **Project detail tabs**: projects get an **Overview** tab (KPI grid +
-  glidepath SVG from `renderGlidepath(metrics)` + owners) and an
-  **Entries** tab (the original entry-stack + action-rail, now in
-  `tpl-project-entries`). References/inbox skip the tab bar and render
-  entries directly. `ui.projectTab` holds the selection.
+  a **framework-appropriate main panel** + owners) and an **Entries** tab
+  (the original entry-stack + action-rail, in `tpl-project-entries`).
+  References/inbox skip the tab bar and render entries directly.
+  `ui.projectTab` holds the selection.
+- **Framework views (v3)**: `renderProjectOverview` branches on
+  `c.framework` to pick the Overview main panel, each with its
+  `frameworkBlurb()` shown after selection (B6):
+  - `kanban` → `renderKanbanBoard(c)`: columns from
+    `framework_config.states`; a card is an **action atom** placed by its
+    `workflow_state` (closed actions auto-fall to the last/Done column);
+    per-card `<select>` moves it, card body opens the entry.
+  - `pdsa` → `renderPdsaCycle(c)` (clickable Plan/Do/Study/Act from
+    `framework_config.phase`) + the glidepath + an Aim/Baseline/Target line.
+  - `milestone` → `renderMilestoneList(c)`: checkbox-toggled milestones
+    (`framework_config.milestones`, first not-done row = "next"), edited in
+    the Edit modal via `milestonesToText`/`textToMilestones`
+    (`Label | owner | YYYY-MM-DD | criteria | x`).
+  - `timeline` → `renderTimeline(c)`: a derived next/overdue trigger
+    (`nextTriggerFor`) over a reverse-chron event log of entries.
+  - no framework (legacy/null) → the plain glidepath, exactly as pre-v3.
+  The framework is chosen with a plain-English picker (`frameworkSelectHtml`)
+  in the project create + edit modals; **the official PM-tool name is shown
+  inline** — plain-language label leads, proper noun in parens, e.g. "A
+  pipeline of content or tasks that move through stages (Kanban)" — and the
+  panel labels show it too ("Board · Kanban"). `FRAMEWORKS[id].name` holds the
+  proper noun (`frameworkName`). (This is a deliberate relaxation of the
+  original "no jargon" rule, at the user's request, to help them associate the
+  plain-English shape with the real method.) Selecting one seeds
+  `framework_config` from `frameworkConfigFor(id)`.
 - **Glidepath**: `renderGlidepath(metrics)` returns '' when there are
   no plottable series, and Overview shows a placeholder. Metrics are
   edited in the project Edit modal via a compact one-series-per-line
-  text format (`metricsToText`/`textToMetrics`).
+  text format (`metricsToText`/`textToMetrics`). Used by the `pdsa` panel
+  and the default (no-framework) panel.
+- **Programs (v3 strategic tier)**: a `type:'program'` container groups
+  projects via their `program_id`. Created with "New program"
+  (`openNewProgramModal`: objective + key-results text
+  `keyResultsToText`/`textToKeyResults`, line `Label | current | target |
+  unit`); edited via `openEditProgramModal`. The program detail page renders
+  `renderProgramDashboard` (OKR-shaped: objective, KRs as progress bars, a
+  subproject grid with per-child RAG + status + open counts, and a recent-
+  activity feed across children) instead of the project tabs. On **home**,
+  programs show as distinct navy tiles (`renderProgramTile`) and their child
+  projects are hidden from the top level (they live under the program).
+  Projects are linked to a program via the `programSelectHtml` picker in the
+  project create/edit modals. The shape wizard provisions a whole program +
+  subprojects when classify returns `is_program` (`openProgramRecommendation`
+  → `provisionProgram`). RAG: `ragOf(c)` = manual `c.rag` else derived
+  (overdue → red, many open → amber, else green); a program's RAG is the
+  worst of its children (`programRag`). **NB:** entries/atoms must use
+  `uid()` for ids, NOT `uniqueSlug` (which only dedupes container ids).
+- **RAG status (v3)**: every container has an authoritative status —
+  manual `c.rag` (`green|amber|red`) set via the `ragSelectHtml` picker in the
+  Edit modals ("Auto" = derive), else `ragOf` derives it (overdue open action →
+  red, >4 open → amber, else green; programs roll up to the worst child).
+  Surfaced as a dot on project/program tiles (`tile-rag`), a `ragChip` in the
+  container header, RAG dots in the program subproject grid, and an at-a-glance
+  count grid in the home header (`#home-rag` — the photograph-able weekly status).
 - **People (derived)**: `derivePeople()` scans atoms for `assigned_to`,
   buckets each person's open + overdue actions across every container,
   and overlays `state.people_meta[name]`. Only people with **open**
@@ -252,6 +350,17 @@ handled, everything else is static assets).
   `#` heading / first line / filename, body → `notes`), and opens the
   drawer one click from Atomize. Standard browser picker → works on
   orange (OneDrive files show in the OS dialog); no server upload.
+- **File attachments (v3, upload pathway)**: project/reference detail has an
+  Attachments section (`renderAttachments` + `uploadAttachment`). The file is
+  read as base64 and POSTed to `/api/attachments`; the **Node** backend writes
+  it under `attachments/<container_id>/` *beside* `THROUGHLINE_DB` (so on orange
+  it lands in the same OneDrive folder, legible to non-users) and returns a
+  record — the **client** then appends `{id,filename,label,mime,added_at,url}`
+  to `container.attachments[]` and saves (server handles bytes only, no state
+  race). `GET /api/attachments/<cid>/<name>` serves the file. The **Worker**
+  returns `501` (the cloud demo has no file store) — the route exists in both
+  backends and the UI degrades with a clear message. Folder-scan (drop a file
+  in the folder, reconcile on load) is the deferred v1.1 pathway.
 - **Visual theme (playground look)**: the shell is a **dark navy header
   zone** — a persistent `.hdr-top` (teal "Throughline" badge + meta +
   save status) plus a per-view dark band: `.hdr-main` on home (DM-serif

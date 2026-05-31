@@ -401,6 +401,7 @@ label.field > .label {
   color: var(--mute);
   font-weight: 500;
 }
+.container-row-title .type-mark.program    { color: var(--navy); }
 .container-row-title .type-mark.project    { color: var(--thread); }
 .container-row-title .type-mark.reference  { color: var(--d-tone); }
 .container-row-title .type-mark.inbox      { color: var(--mute); }
@@ -495,6 +496,10 @@ label.field > .label {
   background: var(--thread-faint);
   color: var(--thread);
   font-weight: 500;
+}
+.type-badge.program {
+  background: rgba(26, 39, 68, 0.10);
+  color: var(--navy);
 }
 .type-badge.reference {
   background: var(--d-faint);
@@ -1032,7 +1037,8 @@ label.field > .label {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 80px 20px;
+  padding: 48px 20px;
+  overflow-y: auto;
 }
 
 .modal {
@@ -1043,6 +1049,10 @@ label.field > .label {
   width: 100%;
   max-width: 540px;
   padding: 28px 28px 24px;
+  /* Tall modals (e.g. Edit project) scroll within the viewport instead of
+     running off the bottom edge. */
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
 }
 
 .modal h2 {
@@ -1118,6 +1128,24 @@ label.field > .label {
 .tile-prog-fill { height: 100%; background: rgba(255,255,255,0.7); border-radius: 2px; }
 .tile-dates { font-size: 0.66rem; opacity: 0.6; }
 
+/* Program tile — visually distinct from project tiles (navy, gradient edge). */
+.program-tile { background: linear-gradient(150deg, var(--navy) 0%, var(--navy-soft) 100%); border: 1px solid rgba(255,255,255,0.10); }
+.prog-badge { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; background: var(--teal); color: #fff; padding: 3px 9px; border-radius: 3px; }
+.rag-dot.lg { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); }
+.rag-dot.tile-rag { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-left: 6px; vertical-align: middle; border: 1.5px solid rgba(255,255,255,0.6); }
+.rag-chip { display: inline-block; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #fff; padding: 2px 9px; border-radius: 999px; }
+.panel-rag { margin-top: 5px; }
+.attachments { margin-top: 12px; }
+.attach-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.btn.tiny { font-size: 0.7rem; padding: 2px 8px; }
+.attach-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.attach-item { display: inline-flex; align-items: center; gap: 5px; background: var(--card); border: 1px solid var(--card-edge); border-radius: 7px; padding: 5px 10px; font-size: 0.82rem; color: var(--thread); }
+.attach-item:hover { border-color: var(--thread-soft); }
+.attach-empty { padding: 2px 0; }
+.hdr-rag { display: flex; gap: 14px; margin-top: 8px; }
+.rag-count { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; color: rgba(255,255,255,0.85); }
+.rag-count .rag-dot { width: 9px; height: 9px; border-radius: 50%; }
+
 /* Shared minibar */
 .minibar { background: var(--paper-edge); border-radius: 2px; overflow: hidden; }
 .minibar > span { display: block; height: 100%; border-radius: 2px; }
@@ -1141,6 +1169,116 @@ label.field > .label {
 .chart-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--mute); margin-bottom: 8px; }
 .chart-note { font-size: 0.66rem; color: var(--mute); margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--card-edge); }
 .glide-empty { padding: 22px 8px; }
+
+/* Kanban board (project framework = kanban). Cards are action atoms; the
+   per-card select moves them between columns by setting workflow_state. */
+.board-card { background: var(--card); border: 1px solid var(--card-edge); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+.framework-name { font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--thread); }
+.framework-blurb { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--mute); margin-left: 8px; }
+.kanban-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(180px, 1fr); gap: 10px; overflow-x: auto; }
+.kanban-col { background: var(--surface, #f4f2ec); border: 1px solid var(--card-edge); border-radius: 8px; padding: 8px; min-width: 180px; }
+.kanban-col-hdr { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--mute); margin-bottom: 8px; display: flex; justify-content: space-between; }
+.kanban-count { background: rgba(0,0,0,0.07); border-radius: 10px; padding: 0 7px; font-size: 0.62rem; }
+.kanban-cards { display: flex; flex-direction: column; gap: 7px; }
+.kanban-card { background: var(--card); border: 1px solid var(--card-edge); border-radius: 7px; padding: 8px 9px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+.kanban-card.done { opacity: 0.6; }
+.kanban-card.done .kanban-card-body { text-decoration: line-through; }
+.kanban-card-body { font-size: 0.82rem; line-height: 1.35; cursor: pointer; }
+.kanban-card-body:hover { color: var(--thread); }
+.kanban-card-meta { font-size: 0.68rem; color: var(--mute); margin-top: 4px; }
+.kanban-move { width: 100%; margin-top: 7px; font-size: 0.7rem; padding: 3px 4px; border: 1px solid var(--card-edge); border-radius: 5px; background: #fff; }
+.kanban-empty { padding: 6px 4px; }
+
+/* PDSA cycle strip (project framework = pdsa). Steps are clickable to set the
+   current phase; sits above the metric chart. */
+.pdsa-cycle { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.pdsa-step { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--card-edge); background: #fff; border-radius: 999px; padding: 5px 13px 5px 5px; font-size: 0.8rem; font-weight: 600; color: var(--mute); cursor: pointer; }
+.pdsa-step:hover { border-color: var(--thread-soft); color: var(--thread); }
+.pdsa-step.active { background: var(--thread); border-color: var(--thread); color: #fff; }
+.pdsa-step-n { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: rgba(0,0,0,0.08); font-size: 0.66rem; }
+.pdsa-step.active .pdsa-step-n { background: rgba(255,255,255,0.25); }
+.pdsa-arrow { color: var(--mute); font-size: 0.8rem; }
+.pdsa-facts { font-size: 0.78rem; color: var(--ink, #2a2f3a); margin-bottom: 10px; }
+
+/* Milestone checklist (project framework = milestone). Checkbox toggles done;
+   the first not-done row is highlighted as "next". */
+.ms-states { font-size: 0.78rem; color: var(--ink, #2a2f3a); margin-bottom: 10px; }
+.ms-list { display: flex; flex-direction: column; }
+.ms-row { display: flex; align-items: flex-start; gap: 10px; padding: 9px 8px; border-bottom: 1px solid var(--card-edge); }
+.ms-row:last-child { border-bottom: none; }
+.ms-row.next { background: var(--thread-faint); border-radius: 7px; }
+.ms-check { flex-shrink: 0; width: 20px; height: 20px; border-radius: 5px; border: 1.5px solid var(--card-edge); background: #fff; cursor: pointer; font-size: 0.8rem; line-height: 1; color: var(--thread); display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+.ms-row.done .ms-check { background: var(--moss, #5b7553); border-color: var(--moss, #5b7553); color: #fff; }
+.ms-main { flex: 1; min-width: 0; }
+.ms-label { font-size: 0.86rem; font-weight: 600; }
+.ms-row.done .ms-label { text-decoration: line-through; color: var(--mute); font-weight: 500; }
+.ms-criteria { font-size: 0.72rem; color: var(--mute); margin-top: 2px; }
+.ms-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; font-size: 0.72rem; }
+.ms-owner { color: var(--ink, #2a2f3a); font-weight: 500; }
+.ms-due { color: var(--mute); }
+.ms-due.overdue { color: var(--r-tone, #b3372f); font-weight: 600; }
+
+/* Timeline (project framework = timeline). A floated next/overdue trigger over
+   a reverse-chronological event log of entries. */
+.tl-next { display: flex; align-items: baseline; gap: 10px; padding: 10px 12px; border-radius: 8px; background: var(--thread-faint); margin-bottom: 12px; }
+.tl-next.overdue { background: var(--r-faint, #f6dedb); }
+.tl-next.none { background: transparent; padding: 4px 0; }
+.tl-next-tag { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--thread); }
+.tl-next.overdue .tl-next-tag { color: var(--r-tone, #b3372f); }
+.tl-next-date { font-weight: 700; font-size: 0.9rem; }
+.tl-next-label { color: var(--ink, #2a2f3a); font-size: 0.85rem; }
+.tl-log { display: flex; flex-direction: column; }
+.tl-event { display: flex; align-items: baseline; gap: 10px; padding: 8px 6px; border-bottom: 1px solid var(--card-edge); cursor: pointer; }
+.tl-event:last-child { border-bottom: none; }
+.tl-event:hover { background: var(--thread-faint); }
+.tl-date { font-family: var(--mono); font-size: 0.72rem; color: var(--mute); flex-shrink: 0; width: 64px; }
+.tl-kind { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: var(--mute); flex-shrink: 0; width: 58px; }
+.tl-title { font-size: 0.86rem; }
+
+/* Guided project wizard (shape wizard). Plain-English radio questions. */
+.wiz-lede { font-size: 0.86rem; color: var(--mute); margin: 0 0 14px; line-height: 1.45; }
+.wiz-options { display: flex; flex-direction: column; gap: 6px; }
+.wiz-opt { display: flex; align-items: flex-start; gap: 9px; padding: 9px 11px; border: 1px solid var(--card-edge); border-radius: 8px; cursor: pointer; font-size: 0.86rem; }
+.wiz-opt:hover { border-color: var(--thread-soft); background: var(--thread-faint); }
+.wiz-opt input { margin-top: 2px; accent-color: var(--thread); }
+.wiz-excerpt { margin: 12px 0; font-size: 0.82rem; }
+.wiz-excerpt summary { cursor: pointer; color: var(--thread); }
+.wiz-excerpt textarea { margin-top: 8px; width: 100%; }
+.wiz-error { color: var(--r-tone, #b3372f); font-size: 0.82rem; margin: 8px 0; }
+.rec-box { background: var(--thread-faint); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 7px; font-size: 0.88rem; margin-bottom: 6px; }
+.rec-k { display: inline-block; min-width: 92px; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--mute); }
+.rec-note { background: rgba(26, 39, 68, 0.06); border-radius: 8px; padding: 11px 13px; font-size: 0.84rem; margin-bottom: 14px; line-height: 1.45; }
+.rec-subs { margin: 7px 0 4px; padding-left: 20px; }
+.rec-subs li { margin: 2px 0; }
+.rec-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-static { background: var(--thread-faint); color: var(--thread); border-radius: 999px; padding: 3px 11px; font-size: 0.78rem; font-weight: 500; }
+.rec-sublist { display: flex; flex-direction: column; gap: 8px; }
+.rec-subedit { display: flex; gap: 8px; }
+.rec-subedit .sub-name { flex: 1; }
+.rec-subedit .sub-fw { flex: 1; min-width: 0; }
+
+/* Program dashboard (OKR-shaped: objective, key results, subproject grid, feed). */
+.prog-objective { margin-bottom: 16px; }
+.prog-obj-text { font-family: var(--display); font-size: 1.25rem; line-height: 1.3; color: var(--navy); margin-top: 4px; }
+.kr-row { margin-bottom: 12px; }
+.kr-head { display: flex; justify-content: space-between; font-size: 0.84rem; margin-bottom: 5px; }
+.kr-label { font-weight: 600; }
+.kr-val { color: var(--mute); font-family: var(--mono); font-size: 0.78rem; }
+.sub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin: 8px 0 16px; }
+.sub-tile { display: block; background: var(--card); border: 1px solid var(--card-edge); border-radius: 9px; padding: 12px 13px; text-decoration: none; color: inherit; }
+.sub-tile:hover { border-color: var(--thread-soft); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.sub-top { display: flex; align-items: center; gap: 8px; }
+.rag-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.sub-title { font-weight: 700; font-size: 0.92rem; color: var(--navy); }
+.sub-status { font-size: 0.78rem; color: var(--mute); margin: 6px 0 9px; line-height: 1.4; }
+.sub-meta { display: flex; justify-content: space-between; font-size: 0.74rem; color: var(--ink, #2a2f3a); }
+.sub-overdue { color: var(--r-tone, #b3372f); font-weight: 600; }
+.pf-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--card-edge); font-size: 0.82rem; }
+.pf-row:last-child { border-bottom: none; }
+.pf-date { font-family: var(--mono); font-size: 0.72rem; color: var(--mute); width: 64px; flex-shrink: 0; }
+.pf-title { flex: 1; }
+.pf-proj { color: var(--thread); font-size: 0.74rem; }
+
 .owners-block { margin-top: 8px; }
 .sec-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--mute); margin-bottom: 8px; }
 .owners-row { display: flex; gap: 8px; flex-wrap: wrap; }

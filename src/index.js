@@ -7,12 +7,13 @@
 // (server.js) exposes the same API over a JSON file for orange-device use.
 
 import { atomizeEntry } from '../shared/atomize.js';
+import { classifyProject } from '../shared/classify.js';
 import { makeLLMCall } from '../shared/llm.js';
 
 const KV_KEY = 'throughline:state';
 
 const EMPTY_STATE = {
-  schema_version: 2,
+  schema_version: 3,
   containers: [],
   entries: [],
   atoms: [],
@@ -30,13 +31,15 @@ function json(body, init = {}) {
   });
 }
 
-// Tolerate v1 docs (no people_meta / v2 container fields) and preserve any
-// unknown keys rather than dropping them.
+// Tolerate v1/v2 docs (no people_meta / v2/v3 container fields) and preserve any
+// unknown keys rather than dropping them. Container inner-fields (incl. the v3
+// program_id/framework/rag) pass through the array untouched; the front-end
+// defaults any missing ones on read.
 function normalize(body) {
   const o = body && typeof body === 'object' ? body : {};
   return {
     ...o,
-    schema_version: 2,
+    schema_version: 3,
     containers: Array.isArray(o.containers) ? o.containers : [],
     entries: Array.isArray(o.entries) ? o.entries : [],
     atoms: Array.isArray(o.atoms) ? o.atoms : [],
@@ -94,6 +97,30 @@ async function handleAtomizeRequest(request, env) {
   }
 }
 
+async function handleClassifyRequest(request, env) {
+  if (request.method !== 'POST') {
+    return json({ error: `${request.method} not allowed` }, { status: 405 });
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'invalid JSON' }, { status: 400 });
+  }
+  const input = {
+    description: typeof body?.description === 'string' ? body.description : '',
+    excerpt: typeof body?.excerpt === 'string' ? body.excerpt : '',
+    answers: body?.answers && typeof body.answers === 'object' ? body.answers : {},
+  };
+  try {
+    const llmCall = makeLLMCall(env);
+    const result = await classifyProject(input, { llmCall });
+    return json(result);
+  } catch (err) {
+    return json({ error: err.message }, { status: 500 });
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -102,6 +129,15 @@ export default {
     }
     if (url.pathname === '/api/atomize') {
       return handleAtomizeRequest(request, env);
+    }
+    if (url.pathname === '/api/classify') {
+      return handleClassifyRequest(request, env);
+    }
+    // Attachments are a local (Node/orange) capability — the cloud demo has no
+    // file store. Keep the route present (identical contract) but say so clearly
+    // so the front-end can degrade gracefully.
+    if (url.pathname === '/api/attachments' || url.pathname.startsWith('/api/attachments/')) {
+      return json({ error: 'Attachments are only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
     }
     // Everything else: static assets from /public.
     return env.ASSETS.fetch(request);

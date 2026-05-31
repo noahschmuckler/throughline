@@ -19,16 +19,39 @@ const ui = { homeView: 'projects', personId: null, personTab: 'actions', project
 // ---------- State + persistence ------------------------------------
 
 function emptyState() {
-  return { schema_version: 2, containers: [], entries: [], atoms: [], people_meta: {} };
+  return { schema_version: 3, containers: [], entries: [], atoms: [], people_meta: {} };
 }
 
-// Tolerate v1 docs (no people_meta, no v2 container fields). Unknown keys are
-// preserved on save by the backend; here we just guarantee the shapes we read.
+// Default the v3 optional fields on a container without dropping any existing
+// keys. Universal fields (program_id, rag) apply to every container; framework
+// fields only to projects; objective/key_results only to programs. A legacy
+// container (no framework) ends up with framework:null and renders as before.
+function normalizeContainer(c) {
+  if (!c || typeof c !== 'object') return c;
+  const out = {
+    ...c,
+    program_id: c.program_id ?? null,                 // link to a parent program; null = standalone
+    rag: c.rag ?? null,                               // 'green'|'amber'|'red'|null (null = derive)
+  };
+  if (c.type === 'project') {
+    out.framework = c.framework ?? null;              // 'kanban'|'pdsa'|'milestone'|'timeline'|null
+    out.framework_config = c.framework_config && typeof c.framework_config === 'object' ? c.framework_config : {};
+  }
+  if (c.type === 'program') {
+    out.objective = typeof c.objective === 'string' ? c.objective : '';
+    out.key_results = Array.isArray(c.key_results) ? c.key_results : [];
+  }
+  return out;
+}
+
+// Tolerate v1/v2 docs (no people_meta, no v2/v3 container fields). Unknown keys
+// are preserved on save by the backend; here we guarantee the shapes we read
+// and default the v3 optional fields so render code can rely on them.
 function normalizeState(d) {
   return {
     ...(d && typeof d === 'object' ? d : {}),
-    schema_version: 2,
-    containers: Array.isArray(d?.containers) ? d.containers : [],
+    schema_version: 3,
+    containers: Array.isArray(d?.containers) ? d.containers.map(normalizeContainer) : [],
     entries:    Array.isArray(d?.entries)    ? d.entries    : [],
     atoms:      Array.isArray(d?.atoms)      ? d.atoms      : [],
     people_meta: d?.people_meta && typeof d.people_meta === 'object' ? d.people_meta : {},
@@ -146,12 +169,68 @@ const INBOX_ID = 'inbox';
 
 // Lookup so each new container type adds one row here, not N ternaries.
 const CONTAINER_LABELS = {
+  program:        { full: 'Program',        short: 'Program',   cls: 'program'   },
   project:        { full: 'Project',        short: 'Project',   cls: 'project'   },
   reference_file: { full: 'Reference File', short: 'Reference', cls: 'reference' },
   inbox:          { full: 'Inbox',          short: 'Inbox',     cls: 'inbox'     },
 };
 const containerLabel   = (c, form = 'full') => CONTAINER_LABELS[c?.type]?.[form] || 'Project';
 const containerTypeCls = (c) => CONTAINER_LABELS[c?.type]?.cls || 'project';
+
+// One source of truth for the PM-framework templates (Phases B/C read this).
+// Each entry: a plain-English `label` for pickers (NO jargon shown to users in
+// required flows), a one-line `blurb` for optional post-selection help, the
+// default scaffold a project gets, and which metric fields the framework wants.
+// `defaultConfig()` seeds a project's `framework_config` on selection.
+const FRAMEWORKS = {
+  kanban: {
+    name: 'Kanban',
+    label: 'A pipeline of content or tasks that move through stages',
+    blurb: 'A board: work flows left-to-right through stages. Good for communications and any pipeline of discrete deliverables.',
+    metricFields: ['throughput', 'cycle_time'],
+    defaultConfig: () => ({ states: [
+      { id: 'backlog',     label: 'Backlog' },
+      { id: 'in_progress', label: 'In progress' },
+      { id: 'in_review',   label: 'In review' },
+      { id: 'done',        label: 'Done' },
+    ] }),
+  },
+  pdsa: {
+    name: 'PDSA',
+    label: 'Improving a measurable outcome over time',
+    blurb: 'A repeating Plan–Do–Study–Act cycle around a metric. Good for quality-improvement work with a measurable endpoint.',
+    metricFields: ['aim', 'baseline', 'target', 'frequency'],
+    defaultConfig: () => ({ aim: '', baseline: null, target: null, frequency: 'monthly', phase: 'plan' }),
+  },
+  milestone: {
+    name: 'Milestone',
+    label: 'A phased effort with milestones to hit',
+    blurb: 'A checklist of milestones with owners and dates. Good for operational change with a clear before/after.',
+    metricFields: ['baseline_state', 'target_state'],
+    defaultConfig: () => ({ milestones: [], baseline_state: '', target_state: '' }),
+  },
+  timeline: {
+    name: 'Timeline',
+    label: 'A situation driven by key dates and events',
+    blurb: 'A dated event log with the next important date floated to the top. Good for personnel matters and deadline-driven tracking.',
+    metricFields: [],
+    defaultConfig: () => ({ next_trigger: null }),
+  },
+};
+const frameworkLabel = (id) => FRAMEWORKS[id]?.label || '';
+const frameworkName  = (id) => FRAMEWORKS[id]?.name || '';
+const frameworkBlurb = (id) => FRAMEWORKS[id]?.blurb || '';
+const frameworkConfigFor = (id) => (FRAMEWORKS[id]?.defaultConfig ? FRAMEWORKS[id].defaultConfig() : {});
+
+// A plain-English framework picker for project modals. The official PM-tool
+// name is shown inline in parens — plain language leads, the proper noun helps
+// the user associate it with the real method.
+function frameworkSelectHtml(selected = '') {
+  const opts = ['<option value="">No set structure — just capture entries</option>']
+    .concat(Object.keys(FRAMEWORKS).map(id =>
+      `<option value="${id}"${id === selected ? ' selected' : ''}>${escHtml(FRAMEWORKS[id].label)} (${escHtml(FRAMEWORKS[id].name)})</option>`));
+  return `<select id="m-framework">${opts.join('')}</select>`;
+}
 
 function getOrCreateInbox() {
   let inbox = state.containers.find(c => c.id === INBOX_ID);
@@ -265,6 +344,42 @@ function lastEntryDate(cid) {
   return lt ? fmtDate(lt) : null;
 }
 
+// RAG status for a container. Manual `c.rag` wins; otherwise derive from work:
+// any overdue open action → red, a pile of open actions → amber, else green.
+// (E1/E2 add the manual-override UI and the program rollup; this is the shared
+// derivation both rely on.)
+function ragOf(c) {
+  if (c && (c.rag === 'red' || c.rag === 'amber' || c.rag === 'green')) return c.rag;
+  if (c && c.type === 'program') return programRag(c);
+  const open = openActionsOf(c.id);
+  if (open.some(isOverdue)) return 'red';
+  if (open.length > 4) return 'amber';
+  return 'green';
+}
+// A program's derived status = the worst of its children (manual override above).
+function programRag(p) {
+  const kids = childProjectsOf(p.id);
+  const order = { green: 0, amber: 1, red: 2 };
+  let worst = 'green';
+  for (const k of kids) { const r = ragOf(k); if (order[r] > order[worst]) worst = r; }
+  return worst;
+}
+const childProjectsOf = (pid) => state.containers.filter(c => c.program_id === pid && c.status !== 'archived');
+const RAG_COLOR = { green: '#3f8f5b', amber: '#c98a1b', red: '#b3372f' };
+const RAG_LABEL = { green: 'On track', amber: 'Watch', red: 'Needs attention' };
+
+// A status picker. "" = auto (derive from work). Manual choice overrides.
+function ragSelectHtml(selected = '') {
+  const opts = [['', 'Auto (from open work)'], ['green', 'On track'], ['amber', 'Watch'], ['red', 'Needs attention']];
+  return `<select id="m-rag">${opts.map(([v, l]) => `<option value="${v}"${v === (selected || '') ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+}
+
+// A small status chip (the authoritative color at this level).
+function ragChip(c) {
+  const rag = ragOf(c);
+  return `<span class="rag-chip" style="background:${RAG_COLOR[rag]}">${RAG_LABEL[rag]}</span>`;
+}
+
 function miniBar(progress, color, h = 4) {
   return `<div class="minibar" style="height:${h}px"><span style="width:${Math.min(progress, 100)}%;background:${color}"></span></div>`;
 }
@@ -307,7 +422,11 @@ function renderGlidepath(metrics) {
       svg += `<line x1="${PL}" y1="${yAt(m.target).toFixed(1)}" x2="${W - PR}" y2="${yAt(m.target).toFixed(1)}" stroke="${color}" stroke-width="0.9" stroke-dasharray="5,3" opacity="0.4"/>`;
     }
     svg += `<path d="${smoothPath(p)}" fill="none" stroke="${color}" stroke-width="${main ? 2.5 : 1.5}" stroke-linecap="round" stroke-linejoin="round"/>`;
-    p.forEach(([x, y]) => { svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${main ? 3 : 2}" fill="${color}"/>`; });
+    p.forEach(([x, y], i) => {
+      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${main ? 3 : 2}" fill="${color}"/>`;
+      // Invisible larger hit target on the main series for click-to-annotate (F2/F3).
+      if (main) svg += `<circle class="glide-hit" data-mi="${mi}" data-idx="${i}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="11" fill="transparent" style="cursor:pointer"/>`;
+    });
     (m.interventions || []).forEach(iv => {
       if (iv.idx == null || iv.idx >= m.data.length) return;
       const x = xAt(iv.idx), y = yAt(m.data[iv.idx]);
@@ -416,8 +535,10 @@ function render() {
 function renderHome(main) {
   main.appendChild(tmpl('tpl-home'));
 
-  main.querySelector('[data-act="new-project"]').onclick =
-    () => openNewContainerModal('project');
+  main.querySelector('[data-act="new-project-guided"]').onclick =
+    () => openProjectWizard();
+  main.querySelector('[data-act="new-program"]').onclick =
+    () => openNewProgramModal();
   main.querySelector('[data-act="new-reference-file"]').onclick =
     () => openNewContainerModal('reference_file');
   main.querySelector('[data-act="new-adhoc"]').onclick =
@@ -463,6 +584,20 @@ function renderHomeSub() {
   if (s.overdue) parts.push(`<span class="hdr-warn">${s.overdue} overdue</span>`);
   if (s.nextMeeting) parts.push(`next ${fmtDate(s.nextMeeting)}`);
   el.innerHTML = parts.join(' · ');
+
+  // At-a-glance status grid: count top-level items (programs + standalone
+  // projects) by RAG — the scannable "weekly status" artifact.
+  const grid = document.getElementById('home-rag');
+  if (grid) {
+    const tops = state.containers.filter(c =>
+      c.status !== 'archived' && (c.type === 'program' || (c.type === 'project' && !c.program_id)));
+    const counts = { red: 0, amber: 0, green: 0 };
+    for (const c of tops) counts[ragOf(c)]++;
+    grid.innerHTML = ['red', 'amber', 'green']
+      .filter(k => counts[k])
+      .map(k => `<span class="rag-count"><span class="rag-dot" style="background:${RAG_COLOR[k]}"></span>${counts[k]} ${RAG_LABEL[k]}</span>`)
+      .join('');
+  }
 }
 
 function wireViewToggle() {
@@ -501,16 +636,44 @@ function renderProjectGrid() {
   const grid = document.getElementById('project-grid');
   if (!grid) return;
   grid.innerHTML = '';
-  const items = filterContainers('project').sort((a, b) => {
+  const byRecent = (a, b) => {
     const ta = lastTouchedOf(a.id) || a.created_at || '';
     const tb = lastTouchedOf(b.id) || b.created_at || '';
     return tb.localeCompare(ta);
-  });
-  if (!items.length) {
-    grid.innerHTML = `<div class="empty muted tile-empty">No projects yet. Click <strong>New project</strong> to start one.</div>`;
+  };
+  const progs = filterContainers('program').sort(byRecent);
+  // Projects inside a program live under it — only standalone projects here.
+  const projects = filterContainers('project').filter(c => !c.program_id).sort(byRecent);
+  if (!progs.length && !projects.length) {
+    grid.innerHTML = `<div class="empty muted tile-empty">No projects yet. Click <strong>✦ New project</strong> to start one.</div>`;
     return;
   }
-  for (const c of items) grid.appendChild(renderProjectTile(c));
+  for (const p of progs) grid.appendChild(renderProgramTile(p));
+  for (const c of projects) grid.appendChild(renderProjectTile(c));
+}
+
+// A program shows as a distinct top-level tile (navy, "PROGRAM" badge, objective,
+// child count + aggregate RAG) that links through to its dashboard.
+function renderProgramTile(p) {
+  const tile = document.createElement('div');
+  tile.className = 'tile program-tile';
+  tile.onclick = () => { location.hash = `#/c/${encodeURIComponent(p.id)}`; };
+  const kids = childProjectsOf(p.id).filter(k => k.type !== 'program');
+  const open = kids.reduce((n, k) => n + openActionsOf(k.id).length, 0);
+  const rag = ragOf(p);
+  tile.innerHTML = `
+    <div class="tile-top">
+      <span class="prog-badge">PROGRAM</span>
+      <span class="rag-dot lg" style="background:${RAG_COLOR[rag]}" title="${rag}"></span>
+    </div>
+    <div class="tile-title">${escHtml(p.title)}</div>
+    <div class="tile-status">${escHtml(p.objective || '')}</div>
+    <div class="tile-bottom">
+      <span class="tile-cat">${kids.length} project${kids.length === 1 ? '' : 's'}</span>
+      <span class="tile-open ${open ? 'has' : ''}">${open ? open + ' open' : '✓ clear'}</span>
+    </div>
+  `;
+  return tile;
 }
 
 function renderProjectTile(c) {
@@ -527,7 +690,7 @@ function renderProjectTile(c) {
 
   tile.innerHTML = `
     <div class="tile-top">
-      <span class="tile-emoji">${escHtml(c.emoji || '📁')}</span>
+      <span class="tile-emoji">${escHtml(c.emoji || '📁')}<span class="rag-dot tile-rag" style="background:${RAG_COLOR[ragOf(c)]}" title="${RAG_LABEL[ragOf(c)]}"></span></span>
       <div class="tile-pct"><div class="tile-pct-num">${pct}%</div><div class="tile-pct-lbl">complete</div></div>
     </div>
     <div class="tile-title">${escHtml(c.title)}</div>
@@ -809,10 +972,57 @@ function renderPersonDetail(person) {
 
 // ---------- Container detail ---------------------------------------
 
+// Attachment list + upload control. Files are stored server-side (Node) under
+// attachments/<container_id>/; the record lives on container.attachments[].
+function renderAttachments(main, c) {
+  const wrap = main.querySelector('#project-attachments');
+  if (!wrap) return;
+  const list = (c.attachments || []);
+  wrap.innerHTML = `
+    <div class="attach-head"><span class="sec-label">Attachments</span>
+      <button class="btn ghost tiny" data-act="add-attach">+ Add file</button></div>
+    ${list.length ? `<div class="attach-list">${list.map(a =>
+      `<a class="attach-item" href="${escHtml(a.url)}" target="_blank" rel="noopener">📎 ${escHtml(a.label || a.filename)}</a>`).join('')}</div>`
+      : `<div class="muted small attach-empty">No files yet.</div>`}
+    <input type="file" id="attach-input" hidden />`;
+  const input = wrap.querySelector('#attach-input');
+  wrap.querySelector('[data-act="add-attach"]').onclick = () => input.click();
+  input.onchange = () => { if (input.files[0]) uploadAttachment(c, input.files[0]); };
+}
+
+async function uploadAttachment(c, file) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const r = await fetch('/api/attachments', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ container_id: c.id, filename: file.name, mime: file.type, data: reader.result }),
+      });
+      if (r.status === 501) { alert('Attachments are only available on the local app, not the cloud demo.'); return; }
+      if (!r.ok) throw new Error(`upload ${r.status}`);
+      const rec = await r.json();
+      c.attachments = (c.attachments || []).concat([{ id: rec.id, filename: rec.filename, label: file.name, mime: rec.mime, added_at: rec.added_at, url: rec.url }]);
+      c.updated_at = nowIso();
+      scheduleSave();
+      render();
+    } catch (e) {
+      console.error(e);
+      alert("Couldn't upload that file.");
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
 function renderContainer(main, c) {
   main.appendChild(tmpl('tpl-project'));
 
   main.querySelector('#project-title').textContent = c.title;
+
+  // Authoritative status chip in the header (not for the inbox singleton).
+  if (c.type !== 'inbox') {
+    const titleWrap = main.querySelector('.panel-hdr-id');
+    if (titleWrap) titleWrap.insertAdjacentHTML('beforeend', `<div class="panel-rag">${ragChip(c)}</div>`);
+  }
 
   // Panel-header emoji + sub line (category for projects, type label otherwise).
   const emojiEl = main.querySelector('#project-emoji');
@@ -850,9 +1060,14 @@ function renderContainer(main, c) {
     tagsDiv.appendChild(span);
   }
 
+  // Attachments (upload pathway) — projects + reference files only.
+  if (c.type === 'project' || c.type === 'reference_file') renderAttachments(main, c);
+
   const editBtn = main.querySelector('[data-act="edit-project"]');
   if (c.type === 'inbox') {
     editBtn.remove();
+  } else if (c.type === 'program') {
+    editBtn.onclick = () => openEditProgramModal(c);
   } else {
     editBtn.onclick = () => openEditContainerModal(c);
   }
@@ -878,6 +1093,10 @@ function renderContainerTab(c) {
   if (tabs) tabs.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.ptab === tab));
 
   body.innerHTML = '';
+  if (c.type === 'program') {
+    renderProgramDashboard(body, c);
+    return;
+  }
   if (tab === 'overview') {
     renderProjectOverview(body, c);
     return;
@@ -888,18 +1107,326 @@ function renderContainerTab(c) {
   renderActionRail(c.id);
 }
 
+// Program dashboard (OKR-shaped): objective, key results as progress bars, a
+// subproject grid (each child with RAG + one-line status + open-action count),
+// and a recent-entries feed across all children.
+function renderProgramDashboard(body, c) {
+  const kids = childProjectsOf(c.id).filter(k => k.type !== 'program');
+  const krs = c.key_results || [];
+
+  const krRows = krs.map(k => {
+    const haveNums = typeof k.current === 'number' && typeof k.target === 'number' && k.target !== 0;
+    const pct = haveNums ? Math.max(0, Math.min(100, Math.round((k.current / k.target) * 100))) : null;
+    const val = [k.current, k.target].filter(v => v !== '' && v != null).join(' / ') + (k.unit ? ' ' + k.unit : '');
+    return `<div class="kr-row">
+      <div class="kr-head"><span class="kr-label">${escHtml(k.label)}</span><span class="kr-val">${escHtml(val)}</span></div>
+      ${pct != null ? miniBar(pct, 'var(--thread)', 7) : ''}
+    </div>`;
+  }).join('');
+
+  const tiles = kids.map(k => {
+    const rag = ragOf(k);
+    const open = openActionsOf(k.id);
+    const overdue = open.filter(isOverdue).length;
+    const status = k.goal_or_purpose || k.summary || '';
+    return `<a class="sub-tile" href="#/c/${encodeURIComponent(k.id)}">
+      <div class="sub-top">
+        <span class="rag-dot" style="background:${RAG_COLOR[rag]}" title="${rag}"></span>
+        <span class="sub-title">${escHtml(k.emoji ? k.emoji + ' ' : '')}${escHtml(k.title)}</span>
+      </div>
+      ${status ? `<div class="sub-status">${escHtml(status.length > 90 ? status.slice(0, 87) + '…' : status)}</div>` : ''}
+      <div class="sub-meta">
+        <span>${completionOf(k)}% complete</span>
+        <span>${open.length} open${overdue ? ` · <span class="sub-overdue">${overdue} overdue</span>` : ''}</span>
+      </div>
+    </a>`;
+  }).join('');
+
+  // Recent entries across all children.
+  const kidIds = new Set(kids.map(k => k.id));
+  const feed = state.entries
+    .filter(e => kidIds.has(e.container_id))
+    .sort((a, b) => (b.occurred_at || '').localeCompare(a.occurred_at || ''))
+    .slice(0, 6);
+  const byId = Object.fromEntries(kids.map(k => [k.id, k]));
+  const feedRows = feed.map(e => `<div class="pf-row">
+      <span class="pf-date">${escHtml(fmtDate((e.occurred_at || '').slice(0, 10)))}</span>
+      <span class="pf-title">${escHtml(e.title || '(untitled)')}</span>
+      <span class="pf-proj">${escHtml(byId[e.container_id]?.title || '')}</span>
+    </div>`).join('');
+
+  body.innerHTML = `
+    <div class="program-dash">
+      <div class="prog-objective">
+        <span class="sec-label">Objective</span>
+        <div class="prog-obj-text">${escHtml(c.objective || 'No objective set yet — add one under Edit.')}</div>
+      </div>
+      ${krs.length ? `<div class="chart-card"><div class="chart-label">Key results</div>${krRows}</div>` : ''}
+      <div class="sec-label">Projects in this program</div>
+      ${kids.length ? `<div class="sub-grid">${tiles}</div>`
+        : `<div class="empty muted small glide-empty">No projects linked yet. Open a project and set <strong>“Part of a program?”</strong> to this one under Edit.</div>`}
+      ${feed.length ? `<div class="chart-card"><div class="chart-label">Recent activity</div>${feedRows}</div>` : ''}
+    </div>`;
+}
+
+// Find or create the per-project "Chart annotations" entry that holds atoms
+// created from the glidepath.
+function getOrCreateAnnotationEntry(cid) {
+  let e = state.entries.find(x => x.container_id === cid && x.title === 'Chart annotations');
+  if (!e) {
+    e = {
+      id: uid(), container_id: cid, kind: 'freetext',
+      occurred_at: nowIso(), title: 'Chart annotations', participants: [], tags: [],
+      notes: '', created_at: nowIso(), updated_at: nowIso(),
+    };
+    state.entries.push(e);
+  }
+  return e;
+}
+
+// Click a glidepath point → add a note (creates an observation atom + marks the
+// point, F2) or mark an intervention start (F3). Annotations are keyed by point
+// index (our metric data is index-based, not dated).
+function openChartAnnotation(c, mi, idx) {
+  const metric = (c.metrics || [])[mi];
+  if (!metric) return;
+  const val = metric.data?.[idx];
+  const existing = (metric.interventions || []).find(iv => iv.idx === idx);
+  const isPdsa = c.framework === 'pdsa';
+  const phaseLabel = isPdsa ? (PDSA_STEPS.find(s => s.id === (c.framework_config?.phase || 'plan'))?.label || 'Plan') : '';
+  openModal(`
+    <h2>Annotate “${escHtml(metric.label || 'metric')}”</h2>
+    <p class="wiz-lede">Point ${idx + 1}${val != null ? ` · ${val}%` : ''}${existing ? ` · currently marked “${escHtml(existing.label)}”` : ''}.</p>
+    <label class="field">
+      <span class="label">Note</span>
+      <input type="text" id="anno-note" placeholder="What happened at this point?" value="${escHtml(existing && !existing.atom_id ? existing.label : '')}" autofocus />
+    </label>
+    <div class="modal-actions">
+      ${isPdsa ? `<button class="btn ghost" data-act="intervention">Mark “${escHtml(phaseLabel)}” start</button>` : ''}
+      <button class="btn ghost" data-act="cancel">Cancel</button>
+      <button class="btn primary" data-act="add">Add note</button>
+    </div>
+  `, (modal) => {
+    modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+    const setIntervention = (label, atomId) => {
+      metric.interventions = (metric.interventions || []).filter(iv => iv.idx !== idx);
+      const iv = { idx, label };
+      if (atomId) iv.atom_id = atomId;
+      metric.interventions.push(iv);
+      c.updated_at = nowIso();
+      scheduleSave();
+      closeModal();
+      renderContainerTab(c);
+    };
+    modal.querySelector('[data-act="add"]').onclick = () => {
+      const note = modal.querySelector('#anno-note').value.trim();
+      if (!note) { modal.querySelector('#anno-note').focus(); return; }
+      const entry = getOrCreateAnnotationEntry(c.id);
+      const atom = { id: uid(), entry_id: entry.id, kind: 'observation', body: note, tags: ['chart'], created_at: nowIso(), updated_at: nowIso() };
+      state.atoms.push(atom);
+      setIntervention(note.length > 22 ? note.slice(0, 20) + '…' : note, atom.id);
+    };
+    const ib = modal.querySelector('[data-act="intervention"]');
+    if (ib) ib.onclick = () => setIntervention(phaseLabel, null);
+  });
+}
+
+// Kanban columns for a project: its configured states (or the framework
+// default). A "card" is an action atom; it sits in its `workflow_state`, or —
+// if closed by an outcome — the last column, or else the first column.
+function kanbanStates(c) {
+  const st = c.framework_config?.states;
+  return Array.isArray(st) && st.length ? st : frameworkConfigFor('kanban').states;
+}
+
+function renderKanbanBoard(c) {
+  const states = kanbanStates(c);
+  const lastId = states[states.length - 1].id;
+  const ids = new Set(states.map(s => s.id));
+  const actions = atomsOfContainer(c.id).filter(a => a.kind === 'action');
+  const colOf = (a) => {
+    if (a.workflow_state && ids.has(a.workflow_state)) return a.workflow_state;
+    if (outcomeForAction(a.id)) return lastId;     // closed → Done
+    return states[0].id;
+  };
+  const byCol = Object.fromEntries(states.map(s => [s.id, []]));
+  for (const a of actions) byCol[colOf(a)].push(a);
+
+  const moveSelect = (a) => `<select class="kanban-move" data-atom="${a.id}">${
+    states.map(s => `<option value="${s.id}"${s.id === colOf(a) ? ' selected' : ''}>${escHtml(s.label)}</option>`).join('')
+  }</select>`;
+  const card = (a) => {
+    const closed = !!outcomeForAction(a.id);
+    const meta = [a.assigned_to, a.due_date ? `due ${fmtDate(a.due_date)}` : ''].filter(Boolean).join(' · ');
+    return `<div class="kanban-card${closed ? ' done' : ''}">
+      <div class="kanban-card-body" data-entry="${a.entry_id}">${escHtml(a.body)}</div>
+      ${meta ? `<div class="kanban-card-meta">${escHtml(meta)}</div>` : ''}
+      ${moveSelect(a)}
+    </div>`;
+  };
+  return `<div class="kanban-board">${states.map(s => `
+    <div class="kanban-col">
+      <div class="kanban-col-hdr">${escHtml(s.label)} <span class="kanban-count">${byCol[s.id].length}</span></div>
+      <div class="kanban-cards">${byCol[s.id].map(card).join('') || '<div class="kanban-empty muted small">—</div>'}</div>
+    </div>`).join('')}</div>`;
+}
+
+// The four-step improvement cycle for a pdsa project. Current step (from
+// framework_config.phase) is highlighted; clicking a step sets it. Plain-English
+// step names — the "PDSA" acronym is never shown in this required view.
+const PDSA_STEPS = [
+  { id: 'plan',  label: 'Plan' },
+  { id: 'do',    label: 'Do' },
+  { id: 'study', label: 'Study' },
+  { id: 'act',   label: 'Act' },
+];
+function renderPdsaCycle(c) {
+  const cur = c.framework_config?.phase || 'plan';
+  const fc = c.framework_config || {};
+  const steps = PDSA_STEPS.map((s, i) =>
+    `<button type="button" class="pdsa-step${s.id === cur ? ' active' : ''}" data-phase="${s.id}">
+       <span class="pdsa-step-n">${i + 1}</span>${escHtml(s.label)}
+     </button>`).join('<span class="pdsa-arrow">→</span>');
+  const facts = [
+    fc.aim ? `<strong>Aim:</strong> ${escHtml(fc.aim)}` : '',
+    (fc.baseline != null && fc.baseline !== '') ? `<strong>Baseline:</strong> ${escHtml(String(fc.baseline))}` : '',
+    (fc.target != null && fc.target !== '') ? `<strong>Target:</strong> ${escHtml(String(fc.target))}` : '',
+  ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+  return `<div class="pdsa-cycle">${steps}</div>${facts ? `<div class="pdsa-facts">${facts}</div>` : ''}`;
+}
+
+// Milestones <-> compact text (one per line), mirroring metricsToText/textToMetrics.
+// Line format: `Label | Owner | YYYY-MM-DD | go/no-go criteria | x`  (trailing x = done)
+function milestonesToText(ms) {
+  return (ms || []).map(m =>
+    [m.label || '', m.owner || '', m.due_date || '', m.criteria || '', m.done ? 'x' : ''].join(' | ').replace(/(\s\|\s*)+$/, '')
+  ).join('\n');
+}
+function textToMilestones(text) {
+  return String(text || '').split('\n').map(l => l.trim()).filter(Boolean).map((line, i) => {
+    const [label = '', owner = '', due = '', criteria = '', done = ''] = line.split('|').map(s => s.trim());
+    return {
+      id: `ms_${i}_${slugify(label).slice(0, 20)}`,
+      label, owner,
+      due_date: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : '',
+      criteria,
+      done: /^(x|done|✓|yes|true)$/i.test(done),
+    };
+  }).filter(m => m.label);
+}
+
+function renderMilestoneList(c) {
+  const ms = c.framework_config?.milestones || [];
+  const fc = c.framework_config || {};
+  if (!ms.length) {
+    return `<div class="empty muted small glide-empty">No milestones yet. Add them under <strong>Edit</strong> — one per line.</div>`;
+  }
+  const nextIdx = ms.findIndex(m => !m.done);
+  const rows = ms.map((m, i) => {
+    const overdue = !m.done && m.due_date && m.due_date < new Date().toISOString().slice(0, 10);
+    return `<div class="ms-row${m.done ? ' done' : ''}${i === nextIdx ? ' next' : ''}">
+      <button type="button" class="ms-check" data-i="${i}" aria-label="Toggle done">${m.done ? '✓' : ''}</button>
+      <div class="ms-main">
+        <div class="ms-label">${escHtml(m.label)}</div>
+        ${m.criteria ? `<div class="ms-criteria">${escHtml(m.criteria)}</div>` : ''}
+      </div>
+      <div class="ms-meta">
+        ${m.owner ? `<span class="ms-owner">${escHtml(m.owner)}</span>` : ''}
+        ${m.due_date ? `<span class="ms-due${overdue ? ' overdue' : ''}">${escHtml(fmtDate(m.due_date))}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  const states = [
+    fc.baseline_state ? `<strong>From:</strong> ${escHtml(fc.baseline_state)}` : '',
+    fc.target_state ? `<strong>To:</strong> ${escHtml(fc.target_state)}` : '',
+  ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+  return `${states ? `<div class="ms-states">${states}</div>` : ''}<div class="ms-list">${rows}</div>`;
+}
+
+// Timeline project: a floated "next trigger" (soonest upcoming next_meeting or
+// open-action due date) plus a reverse-chronological event log of entries.
+function nextTriggerFor(c) {
+  const today = new Date().toISOString().slice(0, 10);
+  const cand = [];
+  if (c.next_meeting) cand.push({ date: c.next_meeting, label: 'Next meeting' });
+  for (const a of openActionsOf(c.id)) if (a.due_date) cand.push({ date: a.due_date, label: a.body });
+  if (!cand.length) return null;
+  const upcoming = cand.filter(x => x.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  if (upcoming.length) return { ...upcoming[0], overdue: false };
+  const past = cand.sort((a, b) => b.date.localeCompare(a.date)); // most recent overdue
+  return { ...past[0], overdue: true };
+}
+function renderTimeline(c) {
+  const trig = nextTriggerFor(c);
+  const head = trig
+    ? `<div class="tl-next${trig.overdue ? ' overdue' : ''}">
+         <span class="tl-next-tag">${trig.overdue ? 'Overdue' : 'Next'}</span>
+         <span class="tl-next-date">${escHtml(fmtDate(trig.date))}</span>
+         <span class="tl-next-label">${escHtml(trig.label)}</span>
+       </div>`
+    : `<div class="tl-next none muted small">No upcoming date set.</div>`;
+  const entries = entriesOf(c.id).sort((a, b) => (b.occurred_at || '').localeCompare(a.occurred_at || ''));
+  const log = entries.length
+    ? `<div class="tl-log">${entries.map(e => `
+        <div class="tl-event" data-entry="${e.id}">
+          <span class="tl-date">${escHtml(fmtDate((e.occurred_at || '').slice(0, 10)))}</span>
+          <span class="tl-kind ${escHtml(e.kind || '')}">${escHtml(e.kind || '')}</span>
+          <span class="tl-title">${escHtml(e.title || '(untitled)')}</span>
+        </div>`).join('')}</div>`
+    : `<div class="empty muted small glide-empty">No events yet. Capture an entry to start the log.</div>`;
+  return head + log;
+}
+
 function renderProjectOverview(body, c) {
   const open = openActionsOf(c.id);
   const pct = completionOf(c);
   const last = lastEntryDate(c.id);
+  const isKanban = c.framework === 'kanban';
+  const isPdsa = c.framework === 'pdsa';
+  const isMilestone = c.framework === 'milestone';
+  const isTimeline = c.framework === 'timeline';
   const kpis = [
     { label: 'Completion', value: pct + '%', tone: toneFor(pct) },
     { label: 'Open actions', value: open.length, tone: open.length === 0 ? TONE.g : open.length <= 3 ? TONE.a : TONE.r },
     { label: 'Last entry', value: last || '—', tone: null },
     { label: 'Next meeting', value: c.next_meeting ? fmtDate(c.next_meeting) : '—', tone: null },
   ];
-  const glide = renderGlidepath(c.metrics);
   const owners = c.owners || [];
+
+  // Framework-appropriate main panel: a board for kanban, a cycle+chart for
+  // pdsa, else the plain glidepath.
+  let panel;
+  if (isKanban) {
+    panel = `<div class="board-card">
+      <div class="chart-label">Board <span class="framework-name">· ${escHtml(frameworkName('kanban'))}</span> <span class="framework-blurb">${escHtml(frameworkBlurb('kanban'))}</span></div>
+      ${renderKanbanBoard(c)}
+    </div>`;
+  } else if (isPdsa) {
+    const glide = renderGlidepath(c.metrics);
+    panel = `<div class="chart-card">
+      <div class="chart-label">Cycle <span class="framework-name">· ${escHtml(frameworkName('pdsa'))}</span> <span class="framework-blurb">${escHtml(frameworkBlurb('pdsa'))}</span></div>
+      ${renderPdsaCycle(c)}
+      ${glide || `<div class="empty muted small glide-empty">No measure yet. Add a metric series under <strong>Edit</strong> to track it over time.</div>`}
+      ${glide ? `<div class="chart-note">● marker = an intervention recorded at that point</div>` : ''}
+    </div>`;
+  } else if (isMilestone) {
+    panel = `<div class="chart-card">
+      <div class="chart-label">Milestones <span class="framework-name">· ${escHtml(frameworkName('milestone'))}</span> <span class="framework-blurb">${escHtml(frameworkBlurb('milestone'))}</span></div>
+      ${renderMilestoneList(c)}
+    </div>`;
+  } else if (isTimeline) {
+    panel = `<div class="chart-card">
+      <div class="chart-label">Timeline <span class="framework-name">· ${escHtml(frameworkName('timeline'))}</span> <span class="framework-blurb">${escHtml(frameworkBlurb('timeline'))}</span></div>
+      ${renderTimeline(c)}
+    </div>`;
+  } else {
+    const glide = renderGlidepath(c.metrics);
+    panel = `<div class="chart-card">
+      <div class="chart-label">Glidepath</div>
+      ${glide || `<div class="empty muted small glide-empty">No glidepath yet. Add a metric series under <strong>Edit</strong> to track progress over time.</div>`}
+      ${glide ? `<div class="chart-note">● marker = an intervention recorded at that point</div>` : ''}
+    </div>`;
+  }
 
   body.innerHTML = `
     <div class="overview">
@@ -909,11 +1436,7 @@ function renderProjectOverview(body, c) {
           <div class="kpi-value" style="color:${k.tone ? k.tone.t : '#1a2744'}">${k.value}</div>
         </div>`).join('')}
       </div>
-      <div class="chart-card">
-        <div class="chart-label">Glidepath</div>
-        ${glide || `<div class="empty muted small glide-empty">No glidepath yet. Add a metric series under <strong>Edit</strong> to track progress over time.</div>`}
-        ${glide ? `<div class="chart-note">● marker = an intervention recorded at that point</div>` : ''}
-      </div>
+      ${panel}
       ${owners.length ? `<div class="owners-block">
         <div class="sec-label">Owners</div>
         <div class="owners-row">${owners.map(o => `<div class="owner-card">
@@ -922,6 +1445,50 @@ function renderProjectOverview(body, c) {
         </div>`).join('')}</div>
       </div>` : ''}
     </div>`;
+
+  // Wire card moves (change workflow_state) and card→entry navigation.
+  body.querySelectorAll('.kanban-move').forEach(sel => {
+    sel.onchange = () => {
+      const a = state.atoms.find(x => x.id === sel.dataset.atom);
+      if (!a) return;
+      a.workflow_state = sel.value;
+      a.updated_at = nowIso();
+      scheduleSave();
+      renderProjectOverview(body, c);
+    };
+  });
+  body.querySelectorAll('.kanban-card-body[data-entry]').forEach(el => {
+    el.onclick = () => openEntryDrawer(c.id, el.dataset.entry);
+  });
+  // Wire pdsa phase selection.
+  body.querySelectorAll('.pdsa-step[data-phase]').forEach(btn => {
+    btn.onclick = () => {
+      c.framework_config = { ...(c.framework_config || {}), phase: btn.dataset.phase };
+      c.updated_at = nowIso();
+      scheduleSave();
+      renderProjectOverview(body, c);
+    };
+  });
+  // Wire timeline event navigation.
+  body.querySelectorAll('.tl-event[data-entry]').forEach(el => {
+    el.onclick = () => openEntryDrawer(c.id, el.dataset.entry);
+  });
+  // Wire glidepath point clicks → annotate (F2/F3).
+  body.querySelectorAll('.glide-hit').forEach(el => {
+    el.addEventListener('click', () => openChartAnnotation(c, Number(el.dataset.mi), Number(el.dataset.idx)));
+  });
+  // Wire milestone done toggles.
+  body.querySelectorAll('.ms-check[data-i]').forEach(btn => {
+    btn.onclick = () => {
+      const ms = c.framework_config?.milestones;
+      const i = Number(btn.dataset.i);
+      if (!Array.isArray(ms) || !ms[i]) return;
+      ms[i].done = !ms[i].done;
+      c.updated_at = nowIso();
+      scheduleSave();
+      renderProjectOverview(body, c);
+    };
+  });
 }
 
 function renderEntryStack(containerId) {
@@ -1608,7 +2175,11 @@ function metricsToText(metrics) {
     return [m.label || '', m.target ?? '', (m.data || []).join(','), ivs].join(' | ').replace(/( \| )+$/, '');
   }).join('\n');
 }
-function textToMetrics(text) {
+// The text format encodes interventions as `idx:label`. An intervention may
+// ALSO carry an optional `atom_id` (set by clicking the chart, F2/F3) — that
+// isn't in the text, so we preserve it from `prevMetrics` by matching label+idx
+// so editing the metric text doesn't drop chart-linked atoms.
+function textToMetrics(text, prevMetrics = null) {
   const out = [];
   for (const line of String(text || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -1616,13 +2187,389 @@ function textToMetrics(text) {
     const series = { label: label || 'metric' };
     if (target !== '' && target != null && !isNaN(parseFloat(target))) series.target = parseFloat(target);
     series.data = (data || '').split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+    const prev = Array.isArray(prevMetrics) ? prevMetrics.find(m => m.label === series.label) : null;
     series.interventions = (ivs || '').split(';').map(s => s.trim()).filter(Boolean).map(tok => {
       const [idx, ...rest] = tok.split(':');
-      return { idx: parseInt(idx, 10), label: rest.join(':').trim() };
+      const iv = { idx: parseInt(idx, 10), label: rest.join(':').trim() };
+      const prevIv = prev && (prev.interventions || []).find(p => p.idx === iv.idx);
+      if (prevIv && prevIv.atom_id) iv.atom_id = prevIv.atom_id;
+      return iv;
     }).filter(iv => !isNaN(iv.idx));
     if (series.data.length) out.push(series);
   }
   return out;
+}
+
+// ---------- Guided project wizard (shape wizard) -------------------
+// Three plain-English questions (no PM jargon) + a description → POST
+// /api/classify → an editable recommendation (openProjectRecommendation, C4).
+
+const WIZARD_Q1 = [
+  { v: 'outcome',  label: 'Improving a number or outcome over time' },
+  { v: 'build',    label: 'Building or rolling out something in phases' },
+  { v: 'pipeline', label: 'Moving pieces of work through stages' },
+  { v: 'dates',    label: 'Staying on top of key dates and deadlines' },
+];
+const WIZARD_Q2 = [
+  { v: 'metric',     label: 'When a number reaches a target' },
+  { v: 'tasks',      label: 'When a set of tasks is finished' },
+  { v: 'published',  label: 'When something is published or goes live' },
+  { v: 'open_ended', label: "It doesn't really have a finish line" },
+];
+
+function radioGroup(name, options, checked) {
+  return `<div class="wiz-options">${options.map(o => `
+    <label class="wiz-opt">
+      <input type="radio" name="${name}" value="${o.v}"${o.v === checked ? ' checked' : ''} />
+      <span>${escHtml(o.label)}</span>
+    </label>`).join('')}</div>`;
+}
+
+function openProjectWizard() {
+  openModal(`
+    <h2>✦ New project</h2>
+    <p class="wiz-lede">Answer a couple of quick questions and Throughline will set it up the right way. You can change anything afterward.</p>
+    <label class="field">
+      <span class="label">What is this about?</span>
+      <textarea id="wiz-desc" placeholder="A sentence or two — e.g. “Improve our lagging CAHPS access measure with provider coaching and a comms push.”"></textarea>
+    </label>
+    <div class="field">
+      <span class="label">What are you working toward?</span>
+      ${radioGroup('wiz-q1', WIZARD_Q1)}
+    </div>
+    <div class="field">
+      <span class="label">How will you know it's done?</span>
+      ${radioGroup('wiz-q2', WIZARD_Q2)}
+    </div>
+    <div class="field" id="wiz-q3-wrap" hidden>
+      <span class="label">Do you already know the measure and how to track it?</span>
+      ${radioGroup('wiz-q3', [{ v: 'yes', label: 'Yes, I know the measure' }, { v: 'no', label: 'Not yet' }])}
+    </div>
+    <details class="wiz-excerpt">
+      <summary>Paste text from a document (optional)</summary>
+      <textarea id="wiz-excerpt" placeholder="Paste any relevant excerpt — used only to suggest a structure."></textarea>
+    </details>
+    <div id="wiz-error" class="wiz-error" hidden></div>
+    <div class="modal-actions">
+      <button class="btn ghost" data-act="manual">Skip — set up manually</button>
+      <button class="btn ghost" data-act="cancel">Cancel</button>
+      <button class="btn primary" data-act="suggest">Get suggestion →</button>
+    </div>
+  `, (modal) => {
+    // Q3 only matters when the goal is a measurable outcome.
+    const toggleQ3 = () => {
+      const g = modal.querySelector('input[name="wiz-q1"]:checked')?.value;
+      modal.querySelector('#wiz-q3-wrap').hidden = g !== 'outcome';
+    };
+    modal.querySelectorAll('input[name="wiz-q1"]').forEach(r => r.addEventListener('change', toggleQ3));
+
+    modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+    modal.querySelector('[data-act="manual"]').onclick = () => { closeModal(); openNewContainerModal('project'); };
+    modal.querySelector('[data-act="suggest"]').onclick = async () => {
+      const description = modal.querySelector('#wiz-desc').value.trim();
+      const excerpt = modal.querySelector('#wiz-excerpt').value.trim();
+      const goal = modal.querySelector('input[name="wiz-q1"]:checked')?.value;
+      const done = modal.querySelector('input[name="wiz-q2"]:checked')?.value;
+      const metric_known = modal.querySelector('input[name="wiz-q3"]:checked')?.value;
+      const err = modal.querySelector('#wiz-error');
+      if (!description) { err.textContent = 'Add a sentence about what this is.'; err.hidden = false; return; }
+
+      // "No defined end" → this is reference material, not a project.
+      if (done === 'open_ended') {
+        closeModal();
+        openNewContainerModal('reference_file', { presetTitle: titleFromDescription(description) });
+        return;
+      }
+
+      const btn = modal.querySelector('[data-act="suggest"]');
+      btn.disabled = true; btn.textContent = 'Thinking…'; err.hidden = true;
+      try {
+        const r = await fetch('/api/classify', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ description, excerpt, answers: { goal, done, metric_known } }),
+        });
+        if (!r.ok) throw new Error(`classify ${r.status}`);
+        const rec = await r.json();
+        openProjectRecommendation(rec, { description });
+      } catch (e) {
+        console.error(e);
+        btn.disabled = false; btn.textContent = 'Get suggestion →';
+        err.textContent = "Couldn't get a suggestion. You can still set it up manually.";
+        err.hidden = false;
+      }
+    };
+  });
+}
+
+// First heading-ish words of a description → a starter title.
+function titleFromDescription(desc) {
+  const first = String(desc || '').split(/[.\n]/)[0].trim();
+  return first.length > 60 ? first.slice(0, 57) + '…' : first;
+}
+
+// Editable recommendation preview. The user can adjust the title, the shape
+// (framework), the measure, and the first step before committing. Program
+// recommendations show their subprojects; full program provisioning lands in
+// D4 — until then a program is created as one project the user can split later.
+function openProjectRecommendation(rec, { description = '' } = {}) {
+  if (rec.is_program) return openProgramRecommendation(rec, { description });
+  const presetTitle = titleFromDescription(description);
+  const phases = (rec.suggested_phases_or_states || []);
+  openModal(`
+    <h2>Here's a suggested setup</h2>
+    <p class="wiz-lede">${escHtml(rec.reason || '')}</p>
+    <label class="field">
+      <span class="label">Project name</span>
+      <input type="text" id="rec-title" value="${escHtml(presetTitle)}" />
+    </label>
+    <label class="field">
+      <span class="label">How will you work this?</span>
+      ${frameworkSelectHtml(rec.framework || 'milestone')}
+    </label>
+    ${phases.length ? `<div class="field"><span class="label">Suggested steps</span>
+      <div class="rec-chips">${phases.map(p => `<span class="chip-static">${escHtml(p)}</span>`).join('')}</div></div>` : ''}
+    <label class="field">
+      <span class="label">Measure (optional)</span>
+      <input type="text" id="rec-metric" value="${escHtml(rec.suggested_metric || '')}" placeholder="What number tells you it's working?" />
+    </label>
+    <label class="field">
+      <span class="label">First step</span>
+      <input type="text" id="rec-first" value="${escHtml(rec.first_action || '')}" />
+    </label>
+    <div class="modal-actions">
+      <button class="btn ghost" data-act="back">← Back</button>
+      <button class="btn primary" data-act="create">Create it</button>
+    </div>
+  `, (modal) => {
+    modal.querySelector('[data-act="back"]').onclick = () => openProjectWizard();
+    modal.querySelector('[data-act="create"]').onclick = () => {
+      provisionFromRecommendation(rec, {
+        description,
+        title: modal.querySelector('#rec-title').value.trim() || presetTitle || 'New project',
+        framework: modal.querySelector('#m-framework').value || '',
+        metric: modal.querySelector('#rec-metric').value.trim(),
+        first_action: modal.querySelector('#rec-first').value.trim(),
+      });
+    };
+  });
+}
+
+// Program recommendation: an editable program name + objective and the list of
+// suggested subprojects (each name + framework editable), provisioned together.
+function openProgramRecommendation(rec, { description = '' } = {}) {
+  const presetTitle = titleFromDescription(description);
+  const subs = rec.if_program_subprojects;
+  openModal(`
+    <h2>This looks like a program</h2>
+    <p class="wiz-lede">${escHtml(rec.reason || '')} You can adjust anything before creating it.</p>
+    <label class="field">
+      <span class="label">Program name</span>
+      <input type="text" id="rec-title" value="${escHtml(presetTitle)}" />
+    </label>
+    <label class="field">
+      <span class="label">Objective</span>
+      <input type="text" id="rec-objective" value="${escHtml(description)}" />
+    </label>
+    <div class="field">
+      <span class="label">Projects to create (${subs.length})</span>
+      <div class="rec-sublist">${subs.map((s, i) => `
+        <div class="rec-subedit">
+          <input type="text" class="sub-name" data-i="${i}" value="${escHtml(s.name)}" />
+          ${frameworkSelectHtml(s.framework).replace('id="m-framework"', `class="sub-fw" data-i="${i}"`)}
+        </div>`).join('')}</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" data-act="back">← Back</button>
+      <button class="btn primary" data-act="create">Create program</button>
+    </div>
+  `, (modal) => {
+    modal.querySelector('[data-act="back"]').onclick = () => openProjectWizard();
+    modal.querySelector('[data-act="create"]').onclick = () => {
+      const editedSubs = subs.map((s, i) => ({
+        name: modal.querySelector(`.sub-name[data-i="${i}"]`).value.trim() || s.name,
+        framework: modal.querySelector(`.sub-fw[data-i="${i}"]`).value || s.framework,
+      }));
+      provisionProgram(rec, {
+        description,
+        title: modal.querySelector('#rec-title').value.trim() || presetTitle || 'New program',
+        objective: modal.querySelector('#rec-objective').value.trim(),
+        subprojects: editedSubs,
+      });
+    };
+  });
+}
+
+// Create a program + each subproject (with framework + a first action) and
+// navigate to the program dashboard.
+function provisionProgram(rec, { description = '', title = '', objective = '', subprojects = [] } = {}) {
+  const pid = uniqueSlug(slugify(title || 'program'));
+  state.containers.push({
+    id: pid, type: 'program', title: title || 'New program',
+    goal_or_purpose: '', summary: description, tags: [], status: 'active',
+    objective: objective || '', key_results: [],
+    created_at: nowIso(), updated_at: nowIso(),
+  });
+  for (const s of subprojects) {
+    const cid = uniqueSlug(slugify(s.name || 'project'));
+    const c = {
+      id: cid, type: 'project', title: s.name || 'Project',
+      goal_or_purpose: '', summary: '', tags: [], status: 'active',
+      program_id: pid, created_at: nowIso(), updated_at: nowIso(),
+    };
+    if (s.framework && FRAMEWORKS[s.framework]) {
+      c.framework = s.framework;
+      c.framework_config = frameworkConfigFor(s.framework);
+    }
+    state.containers.push(c);
+    seedFirstAction(cid, 'Outline the first concrete step for this project.');
+  }
+  if (rec.first_action) seedFirstAction(pid, rec.first_action);
+  scheduleSave();
+  closeModal();
+  location.hash = `#/c/${encodeURIComponent(pid)}`;
+}
+
+// Provision a single project from the (possibly edited) recommendation. Seeds
+// the chosen framework + a first-action atom so the project starts with
+// momentum. For pdsa, an entered measure is stored as the cycle aim.
+function provisionFromRecommendation(rec, { description = '', title = '', framework = '', metric = '', first_action = '' } = {}) {
+  const id = uniqueSlug(slugify(title || 'project'));
+  const c = {
+    id, type: 'project', title: title || 'New project',
+    goal_or_purpose: '', summary: description, tags: [], status: 'active',
+    created_at: nowIso(), updated_at: nowIso(),
+  };
+  if (framework && FRAMEWORKS[framework]) {
+    c.framework = framework;
+    c.framework_config = frameworkConfigFor(framework);
+    if (framework === 'pdsa' && metric) c.framework_config.aim = metric;
+  }
+  state.containers.push(c);
+  if (first_action) seedFirstAction(c.id, first_action);
+  scheduleSave();
+  closeModal();
+  location.hash = `#/c/${encodeURIComponent(id)}`;
+}
+
+// Create an entry + a single open action atom holding the suggested first step.
+// Entries/atoms use uid() (globally unique) — NOT uniqueSlug, which only dedupes
+// container ids and would collide across multiple seeded entries.
+function seedFirstAction(containerId, body) {
+  const eid = uid();
+  state.entries.push({
+    id: eid, container_id: containerId, kind: 'freetext',
+    occurred_at: nowIso(), title: 'Getting started', participants: [], tags: [],
+    notes: '', created_at: nowIso(), updated_at: nowIso(),
+  });
+  state.atoms.push({
+    id: uid(), entry_id: eid, kind: 'action',
+    body: String(body), tags: [], created_at: nowIso(), updated_at: nowIso(),
+  });
+}
+
+// ---------- Programs (strategic tier above projects) ---------------
+
+const programs = () => state.containers.filter(c => c.type === 'program' && c.status !== 'archived');
+
+// Key results <-> compact text. Line: `Label | current | target | unit`.
+function keyResultsToText(krs) {
+  return (krs || []).map(k =>
+    [k.label || '', k.current ?? '', k.target ?? '', k.unit || ''].join(' | ').replace(/(\s\|\s*)+$/, '')
+  ).join('\n');
+}
+function textToKeyResults(text) {
+  return String(text || '').split('\n').map(l => l.trim()).filter(Boolean).map((line, i) => {
+    const [label = '', current = '', target = '', unit = ''] = line.split('|').map(s => s.trim());
+    const num = (v) => (v === '' || isNaN(Number(v)) ? v : Number(v));
+    return { id: `kr_${i}_${slugify(label).slice(0, 16)}`, label, current: num(current), target: num(target), unit };
+  }).filter(k => k.label);
+}
+
+// A <select> of existing programs (for linking a project/reference). Empty =
+// standalone. Used in the project create/edit modals.
+function programSelectHtml(selected = '') {
+  const opts = ['<option value="">— none (standalone) —</option>']
+    .concat(programs().map(p => `<option value="${p.id}"${p.id === selected ? ' selected' : ''}>${escHtml(p.title)}</option>`));
+  return `<select id="m-program">${opts.join('')}</select>`;
+}
+
+function openNewProgramModal() {
+  openModal(`
+    <h2>New program</h2>
+    <p class="wiz-lede">A program groups a few related projects under one goal — use it when work spans several different efforts.</p>
+    <label class="field">
+      <span class="label">Title</span>
+      <input type="text" id="m-title" autofocus />
+    </label>
+    <label class="field">
+      <span class="label">Objective</span>
+      <input type="text" id="m-objective" placeholder="The one outcome this program is driving toward" />
+    </label>
+    <label class="field">
+      <span class="label">Key results (optional)</span>
+      <textarea id="m-krs" class="metrics-input" placeholder="Transfer-rate variance | 12 | 5 | %"></textarea>
+      <span class="field-hint">One per line: <code>Label | current | target | unit</code></span>
+    </label>
+    <div class="modal-actions">
+      <button class="btn ghost" data-act="cancel">Cancel</button>
+      <button class="btn primary" data-act="create">Create</button>
+    </div>
+  `, (modal) => {
+    modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+    modal.querySelector('[data-act="create"]').onclick = () => {
+      const title = modal.querySelector('#m-title').value.trim();
+      if (!title) { modal.querySelector('#m-title').focus(); return; }
+      const id = uniqueSlug(slugify(title));
+      const c = {
+        id, type: 'program', title,
+        goal_or_purpose: '', summary: '', tags: [], status: 'active',
+        objective: modal.querySelector('#m-objective').value.trim(),
+        key_results: textToKeyResults(modal.querySelector('#m-krs').value),
+        created_at: nowIso(), updated_at: nowIso(),
+      };
+      state.containers.push(c);
+      scheduleSave();
+      closeModal();
+      location.hash = `#/c/${encodeURIComponent(id)}`;
+    };
+  });
+}
+
+function openEditProgramModal(c) {
+  openModal(`
+    <h2>Edit program</h2>
+    <label class="field"><span class="label">Title</span>
+      <input type="text" id="m-title" value="${escHtml(c.title)}" /></label>
+    <label class="field"><span class="label">Objective</span>
+      <input type="text" id="m-objective" value="${escHtml(c.objective || '')}" placeholder="The one outcome this program is driving toward" /></label>
+    <label class="field"><span class="label">Key results</span>
+      <textarea id="m-krs" class="metrics-input" placeholder="Transfer-rate variance | 12 | 5 | %">${escHtml(keyResultsToText(c.key_results))}</textarea>
+      <span class="field-hint">One per line: <code>Label | current | target | unit</code></span></label>
+    <label class="field"><span class="label">Status (RAG)</span>
+      ${ragSelectHtml(c.rag || '')}
+      <span class="field-hint">Auto = the worst status among this program's projects.</span></label>
+    <div class="modal-actions">
+      <button class="btn danger" data-act="archive">${c.status === 'archived' ? 'Unarchive' : 'Archive'}</button>
+      <button class="btn ghost" data-act="cancel">Cancel</button>
+      <button class="btn primary" data-act="save">Save</button>
+    </div>
+  `, (modal) => {
+    modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+    modal.querySelector('[data-act="archive"]').onclick = () => {
+      c.status = c.status === 'archived' ? 'active' : 'archived';
+      c.updated_at = nowIso(); scheduleSave(); closeModal();
+      location.hash = c.status === 'archived' ? '#/' : `#/c/${encodeURIComponent(c.id)}`;
+      if (c.status !== 'archived') render();
+    };
+    modal.querySelector('[data-act="save"]').onclick = () => {
+      c.title = modal.querySelector('#m-title').value.trim() || c.title;
+      c.objective = modal.querySelector('#m-objective').value.trim();
+      c.key_results = textToKeyResults(modal.querySelector('#m-krs').value);
+      const ragVal = modal.querySelector('#m-rag')?.value || '';
+      if (ragVal) c.rag = ragVal; else delete c.rag;
+      c.updated_at = nowIso(); scheduleSave(); closeModal(); render();
+    };
+  });
 }
 
 function openNewContainerModal(type, opts = {}) {
@@ -1642,7 +2589,16 @@ function openNewContainerModal(type, opts = {}) {
         <span class="label">Category</span>
         <input type="text" id="m-category" placeholder="e.g. Quality Improvement" />
       </label>
-    </div>` : '';
+    </div>
+    <label class="field">
+      <span class="label">How will you work this?</span>
+      ${frameworkSelectHtml('')}
+      <span class="field-hint">Pick the shape that fits — it sets up the right view. You can change it later.</span>
+    </label>
+    ${programs().length ? `<label class="field">
+      <span class="label">Part of a program?</span>
+      ${programSelectHtml('')}
+    </label>` : ''}` : '';
   openModal(`
     <h2>New ${typeLabel}</h2>
     <label class="field">
@@ -1680,6 +2636,13 @@ function openNewContainerModal(type, opts = {}) {
         const category = modal.querySelector('#m-category')?.value.trim();
         if (emoji) c.emoji = emoji;
         if (category) c.category = category;
+        const framework = modal.querySelector('#m-framework')?.value || '';
+        if (framework && FRAMEWORKS[framework]) {
+          c.framework = framework;
+          c.framework_config = frameworkConfigFor(framework);
+        }
+        const programId = modal.querySelector('#m-program')?.value || '';
+        if (programId) c.program_id = programId;
       }
       state.containers.push(c);
       onCreate?.(c);
@@ -1724,6 +2687,20 @@ function openEditContainerModal(c) {
       <div class="chips-input" id="m-owners"></div>
     </label>
     <label class="field">
+      <span class="label">How will you work this?</span>
+      ${frameworkSelectHtml(c.framework || '')}
+      <span class="field-hint">Changing the shape resets that view's scaffold.</span>
+    </label>
+    ${programs().length ? `<label class="field">
+      <span class="label">Part of a program?</span>
+      ${programSelectHtml(c.program_id || '')}
+    </label>` : ''}
+    <label class="field">
+      <span class="label">Milestones</span>
+      <textarea id="m-milestones" class="metrics-input" placeholder="Pick vendor | Noah | 2026-06-15 | signed SOW | x">${escHtml(milestonesToText(c.framework_config?.milestones))}</textarea>
+      <span class="field-hint">One per line: <code>Label | owner | YYYY-MM-DD | criteria | x</code> (trailing <code>x</code> = done). Shown when this project's shape is milestones.</span>
+    </label>
+    <label class="field">
       <span class="label">Glidepath metrics</span>
       <textarea id="m-metrics" class="metrics-input" placeholder="Label | target | 38,41,44,47 | 5:Protocol updated">${escHtml(metricsToText(c.metrics))}</textarea>
       <span class="field-hint">One series per line: <code>Label | target | comma,data | idx:intervention</code></span>
@@ -1745,6 +2722,11 @@ function openEditContainerModal(c) {
     <label class="field">
       <span class="label">Tags</span>
       <div class="chips-input" id="m-tags"></div>
+    </label>
+    <label class="field">
+      <span class="label">Status (RAG)</span>
+      ${ragSelectHtml(c.rag || '')}
+      <span class="field-hint">Leave on Auto to derive from open/overdue work, or set it by hand.</span>
     </label>
     ${projectFields}
     <div class="modal-actions">
@@ -1776,6 +2758,8 @@ function openEditContainerModal(c) {
       c.goal_or_purpose = modal.querySelector('#m-goal').value.trim();
       c.summary = modal.querySelector('#m-summary').value.trim();
       c.tags = draftTags;
+      const ragVal = modal.querySelector('#m-rag')?.value || '';
+      if (ragVal) c.rag = ragVal; else delete c.rag;
       if (isProject) {
         const emoji = modal.querySelector('#m-emoji').value.trim();
         const color = modal.querySelector('#m-color').value.trim();
@@ -1789,8 +2773,25 @@ function openEditContainerModal(c) {
         else delete c.completion;
         if (next) c.next_meeting = next; else delete c.next_meeting;
         c.owners = draftOwners;
-        c.metrics = textToMetrics(modal.querySelector('#m-metrics').value);
+        const framework = modal.querySelector('#m-framework').value || '';
+        if (framework && FRAMEWORKS[framework]) {
+          if (c.framework !== framework) c.framework_config = frameworkConfigFor(framework);
+          c.framework = framework;
+          if (framework === 'milestone') {
+            const milestones = textToMilestones(modal.querySelector('#m-milestones').value);
+            c.framework_config = { ...(c.framework_config || {}), milestones };
+          }
+        } else {
+          delete c.framework;
+          delete c.framework_config;
+        }
+        c.metrics = textToMetrics(modal.querySelector('#m-metrics').value, c.metrics);
         if (!c.metrics.length) delete c.metrics;
+        const programSel = modal.querySelector('#m-program');
+        if (programSel) {
+          const pid = programSel.value || '';
+          if (pid) c.program_id = pid; else delete c.program_id;
+        }
       }
       c.updated_at = nowIso();
       scheduleSave();
