@@ -8,6 +8,17 @@ things.
 
 Snapshot date: 2026-05-30.
 
+## Issue tracker — `TICKETS.md` (read at session start)
+
+`TICKETS.md` (repo root, **gitignored / local-only**, so it may be absent on
+clones other than Noah's dev box) is the running ticket log of issues, feature
+ideas, and bugs Noah notices while *using* Throughline. **Protocol:** when Noah
+reports a problem/idea in passing, APPEND it there as a numbered ticket and
+confirm — do **not** fix it ad hoc unless he explicitly asks. Tickets accumulate
+until he triggers a *processing session* (triage → prioritize → plan a sprint →
+clear). The file's header documents the format and workflow. (The larger
+deferred V1+ backlog lives in `BUILDPATH.md` §H.)
+
 ## Branch topology (as of snapshot)
 
 - `main` (`b1d034e`) — production. Pre-dates the demo seeder and the
