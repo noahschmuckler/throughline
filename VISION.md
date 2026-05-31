@@ -97,6 +97,47 @@ filesystem "as a whole" in a way the cloud M365 tools can't.
 
 ---
 
+## Hosting — the major open decision (local device vs. central server)
+
+Raised 2026-05-31. Noah has access to an **enterprise dev server** reachable by
+anyone logged into their orange device (or an in-network desktop). Two models:
+
+- **Local (current):** a Node server on each orange device, pointed at a shared
+  OneDrive folder. **Great for the folder-lens** — the server reads and *opens*
+  the user's locally-synced OneDrive files directly via `fs` + the OS. **But
+  multi-user is the hard part** (Epic E2's OneDrive last-write-wins / merge).
+  Needs a per-user install.
+- **Central server (likely endgame):** one Throughline on the dev server,
+  per-user **SSO**, reached at a URL — **no per-user install**, usable from any
+  enterprise machine (not just the orange laptop). An onboarding wizard writes a
+  per-user config; you share a OneDrive folder and send them a link.
+
+The pivotal trade-off:
+- A central server **dissolves the E2 sync problem** — one authoritative process
+  owns state, so concurrency is normal serialized writes, *not* a merge-over-
+  OneDrive race. **This likely makes the E2 OneDrive merge engine throwaway —
+  so do not build it yet.**
+- A central server **complicates the folder-lens** — it can't `fs`-read each
+  user's OneDrive or `start` Excel on their desktop. File access then needs the
+  **Graph API** (one app registration + admin consent — which actually *solves*
+  the per-user Graph gap, vs. every user needing their own), and
+  open-in-native-app needs **Office URI schemes** (`ms-excel:ofe|u|<cloud-url>`)
+  for Office files, with a download/"open in web" fallback otherwise.
+- **Auth becomes mandatory** the moment it's network-exposed (can't serve
+  unauthenticated state to others), so SSO is a *prerequisite* for any non-solo
+  use, not an add-on.
+
+**Design stance to hold regardless:** the front-end is already backend-agnostic
+(Node + Worker backends exist; a central server is a *third*, additive backend —
+no UI changes). Add a **file-access seam** (`listFolder` / `readFile` /
+`openFile`) with a local-`fs` impl now and a Graph impl later, so single-user
+functionality we build now ports to either model.
+
+**De-risk before committing:** a thin **solo** server spike to learn the two
+unknowns — (1) can the server reach the OneDrive *materials* (a synced copy /
+network share / Graph)? (2) is SSO / app-registration feasible in this tenant?
+Those answers decide everything downstream. **Decision pending Noah's probe.**
+
 ## Capabilities of the vision
 
 1. **Filesystem viewer.** An in-app browser of the bound tree. A container's page
