@@ -147,7 +147,63 @@ filesystem "as a whole" in a way the cloud M365 tools can't.
 
 ---
 
-## Proposed sprint sequence (a starting point — we refine this together)
+## Users & collaboration (the real shape)
+
+Throughline is **not** a single-dyad tool. Known roster (2026-05-31):
+- **Noah** (medical director) — primary.
+- **Natalia Peden** — operations dyad (general). **First onboard**, initially to
+  test synchronous edits / consolidation / conflict resolution — not yet for
+  daily use.
+- **Amanda Grady** — operations dyad for urgent care.
+- **Scott Freiberg** + **Stephanie Paruolo** — another med-dir/ops dyad (later).
+- Plus each user's **direct reports**, onboarded by that user. Growing.
+
+Critically, collaboration is a **mesh, not hub-and-spoke**: e.g. Natalia ⇄ Amanda
+may collaborate *without* routing through Noah. So sharing must **not** be gated
+on a single owner.
+
+**Architecture fit — multi-workspace.** Each shared scope = one shared OneDrive
+folder + its `state.json` (+ the bound subfolders for the lens). A user can belong
+to several workspaces; a cross-dyad collaboration is simply a workspace shared
+with those people. This maps cleanly onto how OneDrive sharing already works
+(share a folder with specific people) and needs **no central server** — which the
+enterprise won't easily allow anyway. Getting this shared-folder substrate
+**robust and user-friendly is make-or-break for adoption.**
+
+## Loop intake (downstream — ticket T6)
+
+Throughline has **no loop decoder today**; current meeting intake is export the
+Copilot Facilitator summary to Markdown → Import/drag the `.md` → Atomize. The
+separate `loop-de-loop` tool parses `.loop` artifacts but needs **Graph API
+access** other users don't have — though it ships a strong wizard that walks a
+user through *requesting* that access. Plan: package loop-de-loop / loop-file
+intake as an included Throughline utility, and reuse its access-request wizard
+for **new-user onboarding** — after fixing its known bugs (skips some `.loop`
+files; re-reads already-processed files).
+
+## Epic E2 — Multi-user & sync (now near-term, not "down the line")
+
+Because Natalia's first use is explicitly to **test sync/conflict**, this stops
+being optional. Stages:
+
+- **M0 · Identity** — each running instance knows *who* the user is (Windows
+  username, or a name in `.env`), used to author edits/atoms.
+- **M1 · Auto-merge sync** — each instance keeps a *last-synced snapshot*; when the
+  shared `state.json` changes (or a OneDrive *conflict-copy* appears), do a
+  **3-way merge keyed by object id**. Because `entries`/`atoms` are append +
+  id-keyed, **disjoint additions merge with zero loss** (the common case); only
+  *same-object, same-field* edits are true conflicts. This is the robust core
+  that makes concurrent editing a net positive — and it delivers Noah's
+  git-branch/merge intuition **without a server.**
+- **M2 · Conflict resolution UI** — surface the few real conflicts; let the user
+  choose. Also reconcile/sweep OneDrive `*conflicted copy*` files.
+- **M3 · Workspaces** — point Throughline at multiple shared folders; switch
+  between them; per-workspace bindings.
+- **M4 · User onboarding** — a friendly setup for a new user (clone/sync +
+  register-task + share-folder), folding in loop-de-loop's Graph-access-request
+  wizard (T6).
+
+## Proposed sprint sequence (reordered by the "get it to Natalia" goal)
 
 **Epic E1 — Folder-lens.** Each stage is usable on its own:
 
@@ -173,12 +229,34 @@ verify-each-step discipline V1 used.
 
 ---
 
-## Open questions for planning
+## Sprint plan (current)
 
-1. Is **open-in-native-app (S3)** a must-have-early (Natalia adoption), even
-   ahead of full onboarding?
-2. Confirm the **lens-not-vault** stance: folders are the source of truth for
-   materials, Throughline never owns/edits them. (Load-bearing.)
-3. Does **"shelf"** stay the word? (Noah: yes, as of 2026-05-31.)
-4. How much **AI** in onboarding vs. a good heuristic + human confirm for v1 of
-   the epic?
+**Locked decisions (2026-05-31):** open-in-native-app pulled early (yes);
+lens-not-vault confirmed (yes); "shelf" is the word (yes); onboarding intelligence
+= heuristic **+ cdsapi `gpt-mini`** + user confirm.
+
+The "get something to Natalia soon to test sync" goal **reorders** the work —
+folder-lens features (S0/S1/S3) alone would still clobber on concurrent edits,
+which is the exact thing we want to study. So:
+
+- **Sprint 1 — sync MVP (E2 M0 + M1, + minimal M2)** on the *current* V1 app:
+  identity + 3-way auto-merge + flag the few real conflicts. This is literally
+  what we hand Natalia to test consolidation/conflict resolution.
+- **Sprint 2 — folder-lens MVP (E1 S0 + S1 + S3):** bind a container to a real
+  folder, see its live files, open them in their native apps.
+- **Then interleave** E1 S2/S4/S5 (viewer, onboarding, AI mapping) with E2 M3/M4
+  (workspaces, user onboarding); loop-de-loop intake (T6) stays downstream.
+
+Once Sprint 1 is locked, it graduates into `BUILDPATH.md` as **Epic E2** with
+concrete per-task verify steps (same discipline V1 used).
+
+## Open questions for planning (E2 / sync)
+
+1. **Identity source** — auto-detect the **Windows username**, or a name set in
+   `.env`? (Needed for M0 / edit authorship.)
+2. **Confirm the multi-workspace model** — each shared OneDrive folder = a
+   workspace; a user can be in several; cross-dyad collaboration = a shared
+   workspace. (vs. any wish for one combined DB.)
+3. **Conflict philosophy** — OK to **auto-merge disjoint changes + flag only
+   same-object / same-field** conflicts (recommended), rather than always-manual
+   resolution?
