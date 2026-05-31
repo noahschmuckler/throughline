@@ -1,3 +1,7 @@
+<!-- This is the ORIGIN conversation (frozen record). The vision has since
+     evolved — see VISION.md for the living design/architecture doc (folder-lens
+     direction, reference-vs-shelf, onboarding, open-in-native-app). -->
+
 # ME: 
 I'm thinking through the development of a project management tool for my work as a medical director, which touches many different facets of a large organization, which is itself part of a larger organization, which is itself a player in the confusing field of modern american medicine.  
 The tool, Throughline, has as a design intention - make it easy to capture and monitor progress along many different projects, of many different types, especially when I'm coordinating between myself as medical director and natalia peden as operations director.  

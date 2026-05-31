@@ -8,6 +8,18 @@ things.
 
 Snapshot date: 2026-05-30.
 
+## Vision — `VISION.md` (the next big direction)
+
+`VISION.md` is the living design/architecture doc for where Throughline is
+heading beyond V1: **a structured lens over the OneDrive filesystem** —
+folder-bound containers, the **reference-vs-shelf** distinction, an **onboarding**
+flow that adopts existing folder trees, and **open-in-native-app** (click a file →
+the local server opens it in Excel/Word/etc., not a download). It supersedes the
+§H "folder-scan attachments" line and reframes ticket T4. `BUILDPATH.md` maps the
+shipped V1 (phases A–G); when the folder-lens epic's sequence is locked it
+graduates into BUILDPATH as Epic E1. `design-conversation-05302026.md` is the
+frozen origin conversation.
+
 ## Issue tracker — `TICKETS.md` (read at session start)
 
 `TICKETS.md` (repo root, **gitignored / local-only**, so it may be absent on
