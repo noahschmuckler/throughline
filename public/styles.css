@@ -941,6 +941,17 @@ label.field > .label {
   gap: 5px;
   padding-top: 1px;
 }
+.atom-kind-sel {
+  font-size: 0.68rem;
+  color: var(--mute);
+  border: 1px solid var(--card-edge);
+  border-radius: 6px;
+  padding: 1px 4px;
+  background: var(--paper, #fff);
+  cursor: pointer;
+  max-width: 118px;
+}
+.atom-kind-sel:hover { color: var(--thread); border-color: var(--thread-soft); }
 
 .atom-meta {
   grid-column: 2 / 4;
@@ -1135,13 +1146,7 @@ label.field > .label {
 .rag-dot.tile-rag { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-left: 6px; vertical-align: middle; border: 1.5px solid rgba(255,255,255,0.6); }
 .rag-chip { display: inline-block; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #fff; padding: 2px 9px; border-radius: 999px; }
 .panel-rag { margin-top: 5px; }
-.attachments { margin-top: 12px; }
-.attach-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .btn.tiny { font-size: 0.7rem; padding: 2px 8px; }
-.attach-list { display: flex; flex-wrap: wrap; gap: 8px; }
-.attach-item { display: inline-flex; align-items: center; gap: 5px; background: var(--card); border: 1px solid var(--card-edge); border-radius: 7px; padding: 5px 10px; font-size: 0.82rem; color: var(--thread); }
-.attach-item:hover { border-color: var(--thread-soft); }
-.attach-empty { padding: 2px 0; }
 
 /* Folder lens (Epic E1) */
 .folder-lens { margin-top: 14px; }

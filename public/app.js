@@ -974,47 +974,10 @@ function renderPersonDetail(person) {
 }
 
 // ---------- Container detail ---------------------------------------
-
-// Attachment list + upload control. Files are stored server-side (Node) under
-// attachments/<container_id>/; the record lives on container.attachments[].
-function renderAttachments(main, c) {
-  const wrap = main.querySelector('#project-attachments');
-  if (!wrap) return;
-  const list = (c.attachments || []);
-  wrap.innerHTML = `
-    <div class="attach-head"><span class="sec-label">Attachments</span>
-      <button class="btn ghost tiny" data-act="add-attach">+ Add file</button></div>
-    ${list.length ? `<div class="attach-list">${list.map(a =>
-      `<a class="attach-item" href="${escHtml(a.url)}" target="_blank" rel="noopener">📎 ${escHtml(a.label || a.filename)}</a>`).join('')}</div>`
-      : `<div class="muted small attach-empty">No files yet.</div>`}
-    <input type="file" id="attach-input" hidden />`;
-  const input = wrap.querySelector('#attach-input');
-  wrap.querySelector('[data-act="add-attach"]').onclick = () => input.click();
-  input.onchange = () => { if (input.files[0]) uploadAttachment(c, input.files[0]); };
-}
-
-async function uploadAttachment(c, file) {
-  const reader = new FileReader();
-  reader.onload = async () => {
-    try {
-      const r = await fetch('/api/attachments', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ container_id: c.id, filename: file.name, mime: file.type, data: reader.result }),
-      });
-      if (r.status === 501) { alert('Attachments are only available on the local app, not the cloud demo.'); return; }
-      if (!r.ok) throw new Error(`upload ${r.status}`);
-      const rec = await r.json();
-      c.attachments = (c.attachments || []).concat([{ id: rec.id, filename: rec.filename, label: file.name, mime: rec.mime, added_at: rec.added_at, url: rec.url }]);
-      c.updated_at = nowIso();
-      scheduleSave();
-      render();
-    } catch (e) {
-      console.error(e);
-      alert("Couldn't upload that file.");
-    }
-  };
-  reader.readAsDataURL(file);
-}
+// (The old copy-attachments upload surface was removed — it's superseded by the
+// folder lens, which shows a container's real OneDrive files in place. The Node
+// /api/attachments endpoints remain for any previously-uploaded files but are no
+// longer offered in the UI.)
 
 // ---------- Folder lens (Epic E1) ----------------------------------
 // A container can be BOUND to a real OneDrive folder (root-relative path under
@@ -1257,10 +1220,10 @@ function renderContainer(main, c) {
     tagsDiv.appendChild(span);
   }
 
-  // Folder lens (Epic E1) + Attachments (upload pathway) — projects + refs only.
+  // Folder lens (Epic E1) — projects + reference files show their bound
+  // OneDrive folder's live files in place (replaces the old attachments block).
   if (c.type === 'project' || c.type === 'reference_file') {
     renderFolderLens(main, c);
-    renderAttachments(main, c);
   }
 
   const editBtn = main.querySelector('[data-act="edit-project"]');
@@ -2218,7 +2181,15 @@ function renderAtomItem(atom) {
     <div class="atom-item ${itemCls}" data-atom-id="${atom.id}">
       <div class="rail"></div>
       <textarea class="atom-body" data-atom-body rows="1">${escHtml(atom.body)}</textarea>
-      <div class="tools"><button class="btn ghost tiny" data-atom-delete title="Delete">×</button></div>
+      <div class="tools">
+        <select class="atom-kind-sel" data-atom-kind title="Change type">
+          <option value="observation"${atom.kind === 'observation' ? ' selected' : ''}>Observation</option>
+          <option value="decision"${atom.kind === 'decision' ? ' selected' : ''}>Decision</option>
+          <option value="action"${atom.kind === 'action' ? ' selected' : ''}>Action</option>
+          <option value="outcome"${atom.kind === 'outcome' ? ' selected' : ''}>Outcome</option>
+        </select>
+        <button class="btn ghost tiny" data-atom-delete title="Delete">×</button>
+      </div>
       ${metaHtml}
       ${outcomeRefHtml}
     </div>
@@ -2259,6 +2230,30 @@ function handleAddAtom(row) {
   renderDrawerInner(entryId);
   const newRow = document.querySelector(`[data-atom-id="${newAtom.id}"]`);
   if (newRow) newRow.querySelector('[data-atom-body]')?.focus();
+}
+
+// Re-type an atom (the AI mis-classifies ~30-50% of the time, so this is a
+// frequent correction). Fix up kind-specific fields: gaining 'action' seeds
+// assigned_to/due_date, leaving it drops them; gaining 'outcome' seeds
+// parent_atom_id, leaving it drops the link so it no longer closes whatever
+// action it pointed at. Open/closed stays a derived property.
+function changeAtomKind(atom, newKind) {
+  if (!atom || atom.kind === newKind) return;
+  atom.kind = newKind;
+  if (newKind === 'action') {
+    if (typeof atom.assigned_to !== 'string') atom.assigned_to = '';
+    if (typeof atom.due_date !== 'string') atom.due_date = '';
+  } else {
+    delete atom.assigned_to;
+    delete atom.due_date;
+  }
+  if (newKind === 'outcome') {
+    if (!('parent_atom_id' in atom)) atom.parent_atom_id = null;
+  } else {
+    delete atom.parent_atom_id;
+  }
+  atom.updated_at = nowIso();
+  scheduleSave();
 }
 
 // Delegated handlers on the drawer — attached once at boot. Survives any
@@ -2311,6 +2306,13 @@ function wireAtomItem(item, entryId) {
     state.atoms = state.atoms.filter(a => a.id !== id);
     scheduleSave();
     renderDrawerInner(entryId);
+  });
+
+  item.querySelector('[data-atom-kind]')?.addEventListener('change', (ev) => {
+    const newKind = ev.target.value;
+    if (newKind === atom.kind) return;
+    changeAtomKind(atom, newKind);
+    renderDrawerInner(entryId); // re-buckets the atom into its new section
   });
 
   if (atom.kind === 'action') {
@@ -2930,6 +2932,7 @@ function openEditContainerModal(c) {
     </label>
     ${projectFields}
     <div class="modal-actions">
+      ${isProject ? `<button class="btn ghost" data-act="to-reference" title="Turn this into an ongoing reference file (keeps all entries)">→ Reference file</button>` : ''}
       <button class="btn danger" data-act="archive">${c.status === 'archived' ? 'Unarchive' : 'Archive'}</button>
       <button class="btn ghost" data-act="cancel">Cancel</button>
       <button class="btn primary" data-act="save">Save</button>
@@ -2945,6 +2948,7 @@ function openEditContainerModal(c) {
     }
 
     modal.querySelector('[data-act="cancel"]').onclick = closeModal;
+    modal.querySelector('[data-act="to-reference"]')?.addEventListener('click', () => convertProjectToReference(c));
     modal.querySelector('[data-act="archive"]').onclick = () => {
       c.status = c.status === 'archived' ? 'active' : 'archived';
       c.updated_at = nowIso();
@@ -2999,6 +3003,40 @@ function openEditContainerModal(c) {
       render();
     };
   });
+}
+
+// Convert a project → reference file. Non-destructive: all entries/atoms stay
+// attached (they key off the stable container id), and the project-only fields
+// (framework/framework_config/metrics/owners/completion/next_meeting/category/
+// emoji/color) are KEPT but go dormant — the reference view just doesn't read
+// them, so the change is reversible. The program link is cleared (a reference
+// isn't shown as a subproject). A warning summarizes what stops showing.
+function convertProjectToReference(c) {
+  if (c.type !== 'project') return;
+  const atoms = atomsOfContainer(c.id);
+  const openActions = atoms.filter(a => a.kind === 'action' && !outcomeForAction(a.id)).length;
+  const dormant = [];
+  if (c.framework) dormant.push(`the ${frameworkName(c.framework) || 'framework'} view`);
+  if ((c.metrics || []).length) dormant.push(`${c.metrics.length} glidepath metric${c.metrics.length > 1 ? 's' : ''}`);
+  if ((c.owners || []).length) dormant.push('the owners list');
+
+  const lines = [
+    `Convert “${c.title}” from a project into a reference file?`,
+    ``,
+    `Nothing is deleted — every entry and atom stays exactly where it is. What changes:`,
+    `• The project Overview goes away${dormant.length ? ` (${dormant.join(', ')} stop showing)` : ''}. That data is kept on the record and comes back if you convert it to a project again.`,
+  ];
+  if (openActions) lines.push(`• ${openActions} open action${openActions > 1 ? 's' : ''} won't be summarized here anymore, but stay in the entry list and the People view.`);
+  if (c.program_id) lines.push(`• It will be unlinked from its program (references aren't shown as subprojects).`);
+  lines.push(``, `Proceed?`);
+
+  if (!confirm(lines.join('\n'))) return;
+  c.type = 'reference_file';
+  if (c.program_id) delete c.program_id;
+  c.updated_at = nowIso();
+  scheduleSave();
+  closeModal();
+  render();
 }
 
 // Reusable chip editor — shared by tags + owners (and any future chip field).
@@ -3207,11 +3245,22 @@ function renderTriage() {
   const { total, assigned } = triageTotals();
   const done = total > 0 && assigned === total;
   const projs = projects();
+  const refs = referenceFiles();
 
   const optionsFor = (cur) => {
     let opts = `<option value="__none__"${!cur ? ' selected' : ''}>— Unassigned —</option>`;
-    for (const p of projs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
+    if (projs.length) {
+      opts += `<optgroup label="Projects">`;
+      for (const p of projs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
+      opts += `</optgroup>`;
+    }
+    if (refs.length) {
+      opts += `<optgroup label="Reference files">`;
+      for (const p of refs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
+      opts += `</optgroup>`;
+    }
     opts += `<option value="__new__">+ New project…</option>`;
+    opts += `<option value="__newref__">+ New reference file…</option>`;
     opts += `<option value="__inbox__"${cur === '__inbox__' ? ' selected' : ''}>Inbox only</option>`;
     return opts;
   };
@@ -3239,9 +3288,11 @@ function renderTriage() {
 
     let control;
     if (triage.newForm[c.id]) {
+      const nf = triage.newForm[c.id];
+      const isRef = nf.type === 'reference_file';
       control = `<div class="t-newform">
-        <input type="text" data-tnew="${escHtml(c.id)}" placeholder="Project name…" value="${escHtml(triage.newForm[c.id] === true ? '' : triage.newForm[c.id])}" />
-        <button class="btn tiny primary" data-tnew-create="${escHtml(c.id)}">Create</button>
+        <input type="text" data-tnew="${escHtml(c.id)}" placeholder="${isRef ? 'Reference file name…' : 'Project name…'}" value="${escHtml(nf.value || '')}" />
+        <button class="btn tiny primary" data-tnew-create="${escHtml(c.id)}">Create ${isRef ? 'reference' : 'project'}</button>
         <button class="btn tiny" data-tnew-cancel="${escHtml(c.id)}">✕</button>
       </div>`;
     } else {
@@ -3278,13 +3329,16 @@ function renderTriage() {
     </div>`;
   }).join('');
 
-  const projChips = projs.map(p => {
+  const countTarget = (p) => {
     let n = 0;
     for (const c of triage.clusters) for (const a of c.atoms) if (triageTarget(c, a.key) === p.id) n++;
-    return `<div class="t-projchip${n ? ' active' : ''}"${n ? ` style="border-color:${projectColor(p)}"` : ''}>
+    return n;
+  };
+  const chipHtml = (p, n) => `<div class="t-projchip${n ? ' active' : ''}"${n ? ` style="border-color:${projectColor(p)}"` : ''}>
       <span>${escHtml(p.title)}</span>${n ? `<span class="t-projchip-n" style="background:${projectColor(p)}">${n}</span>` : ''}
     </div>`;
-  }).join('');
+  const projChips = projs.map(p => chipHtml(p, countTarget(p))).join('');
+  const refChips = refs.map(p => [p, countTarget(p)]).filter(([, n]) => n).map(([p, n]) => chipHtml(p, n)).join('');
 
   panel.innerHTML = `
     <div class="t-header">
@@ -3304,6 +3358,7 @@ function renderTriage() {
       <div class="t-sidebar">
         <div class="t-sidebar-label">Projects</div>
         ${projChips || '<div class="muted small">No projects yet.</div>'}
+        ${refChips ? `<div class="t-sidebar-label">Reference files</div>${refChips}` : ''}
         <div class="t-commit">
           <button class="btn primary ${done ? 'ready' : ''}" data-act="t-commit">${done ? '✓ Commit entry' : 'Commit entry →'}</button>
           ${total - assigned ? `<div class="t-commit-hint">${total - assigned} unassigned → stay on this entry</div>` : ''}
@@ -3337,7 +3392,8 @@ function wireTriage() {
     sel.addEventListener('change', () => {
       const id = sel.dataset.tcluster;
       const v = sel.value;
-      if (v === '__new__') { triage.newForm[id] = true; renderTriage(); return; }
+      if (v === '__new__') { triage.newForm[id] = { type: 'project', value: '' }; renderTriage(); return; }
+      if (v === '__newref__') { triage.newForm[id] = { type: 'reference_file', value: '' }; renderTriage(); return; }
       assignTriageCluster(id, v === '__none__' ? null : v);
     });
   });
@@ -3345,20 +3401,20 @@ function wireTriage() {
   panel.querySelectorAll('[data-tatom]').forEach(sel => {
     sel.addEventListener('change', () => {
       const v = sel.value;
-      if (v === '__new__') { sel.value = '__none__'; return; } // new-project only at cluster level
+      if (v === '__new__' || v === '__newref__') { sel.value = '__none__'; return; } // new container only at cluster level
       overrideTriageAtom(sel.dataset.tatom, sel.dataset.takey, v === '__none__' ? null : v);
     });
   });
 
   panel.querySelectorAll('[data-tnew]').forEach(inp => {
-    inp.addEventListener('input', () => { triage.newForm[inp.dataset.tnew] = inp.value; });
+    inp.addEventListener('input', () => { if (triage.newForm[inp.dataset.tnew]) triage.newForm[inp.dataset.tnew].value = inp.value; });
     inp.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') triageCreateProject(inp.dataset.tnew, inp.value);
+      if (ev.key === 'Enter') triageCreateContainer(inp.dataset.tnew, inp.value);
       if (ev.key === 'Escape') { delete triage.newForm[inp.dataset.tnew]; renderTriage(); }
     });
     inp.focus();
   });
-  panel.querySelectorAll('[data-tnew-create]').forEach(b => b.addEventListener('click', () => triageCreateProject(b.dataset.tnewCreate, triage.newForm[b.dataset.tnewCreate])));
+  panel.querySelectorAll('[data-tnew-create]').forEach(b => b.addEventListener('click', () => triageCreateContainer(b.dataset.tnewCreate, triage.newForm[b.dataset.tnewCreate]?.value)));
   panel.querySelectorAll('[data-tnew-cancel]').forEach(b => b.addEventListener('click', () => { delete triage.newForm[b.dataset.tnewCancel]; renderTriage(); }));
 }
 
@@ -3378,12 +3434,14 @@ function overrideTriageAtom(clusterId, key, target) {
   renderTriage();
 }
 
-function triageCreateProject(clusterId, title) {
+function triageCreateContainer(clusterId, title) {
   title = (typeof title === 'string' ? title : '').trim();
   if (!title) return;
+  const nf = triage.newForm[clusterId];
+  const type = (nf && nf.type === 'reference_file') ? 'reference_file' : 'project';
   const id = uniqueSlug(slugify(title));
   const c = {
-    id, type: 'project', title, goal_or_purpose: '', summary: '',
+    id, type, title, goal_or_purpose: '', summary: '',
     tags: [], status: 'active', created_at: nowIso(), updated_at: nowIso(),
   };
   state.containers.push(c);

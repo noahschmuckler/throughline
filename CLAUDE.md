@@ -317,7 +317,13 @@ handled, everything else is static assets).
 - **Drawer flow**: `openEntryDrawer(containerId, entryId)`. If
   `entryId` is null, a fresh entry is pushed into state at
   `containerId`. The drawer's container picker lets entries be
-  *moved* between containers by mutating `entry.container_id`.
+  *moved* between containers by mutating `entry.container_id`. Each atom
+  row has a **type selector** (`[data-atom-kind]` → `changeAtomKind`) to
+  re-classify it (obs/decision/action/outcome) — the AI mis-files often, so
+  this is a frequent fix. Re-typing adjusts kind-specific fields (gaining
+  `action` seeds `assigned_to`/`due_date`, leaving it drops them; gaining/
+  losing `outcome` adds/clears `parent_atom_id`, which is what makes it
+  close/stop-closing an action) and re-buckets the atom into its section.
 - **Ad-hoc capture**: `openAdHocEntryDrawer()` lazy-creates Inbox via
   `getOrCreateInbox()` and opens the drawer pre-pointed at it. The
   picker still allows immediate filing into a project / reference.
@@ -402,11 +408,23 @@ handled, everything else is static assets).
 - **Entry triage (AI-assisted ingestion)**: the drawer's "✦ Atomize
   notes" button calls `openTriageModal(entryId)` → `POST /api/atomize`
   → a triage overlay (`#triage`) of proposed atom clusters. Each
-  cluster/atom is assigned to a project (or Inbox / a new project made
-  inline). `commitTriage()` writes real atoms; when one capture spans
-  several projects the source entry goes to the **dominant** target and
-  the rest fan out into **sibling entries** cloned from it. Manual atom
-  entry remains the always-available path.
+  cluster/atom is filed into a **project OR reference file** — the picker
+  (`optionsFor`) groups both under `<optgroup>`s and offers `+ New project…`
+  **and** `+ New reference file…` inline (`triageCreateContainer` is
+  type-aware; `triage.newForm[id]` holds `{type,value}`), plus Inbox. The
+  sidebar shows both project and reference chips with counts. `commitTriage()`
+  writes real atoms; when one capture spans several containers the source entry
+  goes to the **dominant** target and the rest fan out into **sibling entries**
+  cloned from it. Manual atom entry remains the always-available path.
+- **Convert project → reference file**: the project Edit modal has a
+  "→ Reference file" action (`convertProjectToReference`). It flips
+  `type` only — every entry/atom stays attached (they key off the stable
+  container id), and the project-only fields
+  (`framework`/`framework_config`/`metrics`/`owners`/`completion`/
+  `next_meeting`/`category`/`emoji`/`color`) are **kept but go dormant**
+  (the reference view doesn't read them, so it's reversible). `program_id`
+  is cleared (a reference isn't a subproject). A `confirm()` warns what
+  stops showing and how many open actions move to the entry-list/People-only.
 - **File import (ingestion entry point)**: dashboard "⤓ Import .md…"
   button → `openFileImport()`, and drag-drop on `.home` → both call
   `importTextFile(file)`. It reads the file (FileReader), makes a
@@ -414,17 +432,15 @@ handled, everything else is static assets).
   `#` heading / first line / filename, body → `notes`), and opens the
   drawer one click from Atomize. Standard browser picker → works on
   orange (OneDrive files show in the OS dialog); no server upload.
-- **File attachments (v3, upload pathway)**: project/reference detail has an
-  Attachments section (`renderAttachments` + `uploadAttachment`). The file is
-  read as base64 and POSTed to `/api/attachments`; the **Node** backend writes
-  it under `attachments/<container_id>/` *beside* `THROUGHLINE_DB` (so on orange
-  it lands in the same OneDrive folder, legible to non-users) and returns a
-  record — the **client** then appends `{id,filename,label,mime,added_at,url}`
-  to `container.attachments[]` and saves (server handles bytes only, no state
-  race). `GET /api/attachments/<cid>/<name>` serves the file. The **Worker**
-  returns `501` (the cloud demo has no file store) — the route exists in both
-  backends and the UI degrades with a clear message. Folder-scan (drop a file
-  in the folder, reconcile on load) is the deferred v1.1 pathway.
+- **File attachments (DEPRECATED UI, removed)**: the old copy-attachments
+  section on project/reference detail was **removed** — it's superseded by the
+  **folder lens** (Epic E1), which shows a container's real OneDrive files in
+  place instead of uploading copies. The Node `/api/attachments` endpoints (write
+  under `attachments/<container_id>/` beside `THROUGHLINE_DB`; `GET
+  /api/attachments/<cid>/<name>` serves; Worker `501`s) and any existing
+  `container.attachments[]` data are **left intact** (so prior uploads still
+  resolve), but nothing in the UI creates or lists them now. `renderAttachments`/
+  `uploadAttachment` are gone.
 - **Visual theme (playground look)**: the shell is a **dark navy header
   zone** — a persistent `.hdr-top` (teal "Throughline" badge + meta +
   save status) plus a per-view dark band: `.hdr-main` on home (DM-serif
