@@ -575,6 +575,27 @@ ready to use solo and to demo the lens idea to Natalia.
 > date · task id · what changed · files · evidence (screenshot path /
 > curl transcript). This is how a future session knows what's done.
 
+- 2026-06-01 — **Post-E1 feature batch (user requests after orange testing).**
+  Five UX changes on `folder-lens-mvp`, all verified headlessly + pushed:
+  (1) **Convert project ⇄ reference file** — bidirectional buttons in the Edit
+  modal (`convertProjectToReference` / `convertReferenceToProject`). Flip `type`
+  only; entries/atoms stay attached; project→ref keeps project-only fields
+  **dormant** (reversible) + clears `program_id`; ref→project re-activates them or
+  makes an unstructured project. Verified: round-trip kept metrics/owners/
+  completion; 9 entries+24 atoms intact. (2) **Triage files into reference files**
+  — picker groups Projects + Reference files under optgroups, "+ New reference
+  file…" inline (`triageCreateContainer` type-aware), reference sidebar chips.
+  (3) **Atom retype** — per-atom type selector in the drawer (`changeAtomKind`),
+  fixes the AI's ~50–70% mis-filing; adjusts action/outcome fields + re-buckets.
+  (4) **Removed the deprecated copy-attachments UI** (folder lens supersedes it);
+  Node `/api/attachments` endpoints + existing data left intact. (5) Earlier the
+  same day: the **expandable lazy-loaded folder tree** (see entry below). Files:
+  `public/app.js`, `public/index.html`, `public/styles.css`, `CLAUDE.md`.
+  Evidence: `/tmp/tl_edit.png`, `/tmp/tl_detail.png` (no attachments), DOM dumps
+  confirming the triage optgroups + per-atom selectors, jq round-trip transcripts,
+  `/tmp/tl_refedit.png` (→ Project button). 14/14 unit tests pass; temp hooks
+  removed. **NB for next session:** the active branch is now `folder-lens-mvp`
+  (pushed to origin), not `system-ui-and-triage` — see CLAUDE.md branch topology.
 - 2026-06-01 — **E1.3 follow-up: expandable folder tree (user request).** Orange
   testing surfaced that bound subfolders looked clickable but didn't navigate.
   Replaced the flat one-level listing with a lazily-loaded expandable tree:

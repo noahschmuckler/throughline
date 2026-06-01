@@ -6,7 +6,7 @@ that aren't documented there or in the code — the deploy quirks, branch
 topology at time of writing, and patterns worth knowing before changing
 things.
 
-Snapshot date: 2026-05-30.
+Snapshot date: 2026-06-01.
 
 ## Vision — `VISION.md` (the next big direction)
 
@@ -43,19 +43,34 @@ deferred V1+ backlog lives in `BUILDPATH.md` §H.)
   Adds the Ad-hoc capture flow, Inbox container, and closed-action
   display. PR open at
   github.com/noahschmuckler/throughline/pull/new/adhoc-inbox.
-- `system-ui-and-triage` (current) — unmerged, branched off
-  `adhoc-inbox`. The big one. **NOT pushed yet** (local only — the user
-  said don't push). As of this snapshot it is 4 commits ahead of
-  `adhoc-inbox`:
+- `system-ui-and-triage` (origin) — unmerged, branched off
+  `adhoc-inbox`. The big one (V1: programs, PM frameworks, AI shape wizard,
+  RAG, chart atoms). **Now pushed** (`origin/system-ui-and-triage` matches
+  local). It is 4 commits ahead of `adhoc-inbox`:
   1. dashboard (tile grid + glidepath + People view) + entry triage
      modal + schema **v2** + the **Node server** backend.
   2. real atomizer providers — `anthropic` + `cdsapi` (orange).
   3. reskin to the playground look (navy header, DM fonts) + demo
      glidepath/owner data.
   4. ingestion surface — **Import .md / drag-drop** a Markdown file.
+- `folder-lens-mvp` (origin, **current**) — branched off
+  `system-ui-and-triage`. **This is the active branch and the one orange
+  runs.** Pushed to GitHub at the user's request to test on the orange
+  device. Adds, on top of V1:
+  1. **Epic E1 — folder lens** (`lib/files.js`, `/api/fs/list` + `/api/fs/open`,
+     `container.folder`, bind/browse modal, **expandable lazy-loaded file tree**,
+     open-in-native-app). Local-Node only; Worker 501s. See the Folder lens
+     section below.
+  2. **Convert project ⇄ reference file** (both directions, Edit modal).
+  3. **Triage files into reference files** too (not just projects).
+  4. **Atom retype** in the entry drawer (fix the AI's mis-classification).
+  5. **Removed the deprecated copy-attachments UI** (folder lens replaces it).
 
 Each branch stacks on the previous. Verify what a branch actually adds
-with `git log main..HEAD --oneline` before reading the diff.
+with `git log <parent>..HEAD --oneline` before reading the diff.
+**Guardrail change:** the old "never push" rule is lifted for
+`folder-lens-mvp` — the user asked to push it. Still confirm before pushing
+anything else.
 
 ## Running it / seeing it right now (for a cold start)
 
