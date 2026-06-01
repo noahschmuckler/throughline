@@ -416,15 +416,18 @@ handled, everything else is static assets).
   writes real atoms; when one capture spans several containers the source entry
   goes to the **dominant** target and the rest fan out into **sibling entries**
   cloned from it. Manual atom entry remains the always-available path.
-- **Convert project → reference file**: the project Edit modal has a
-  "→ Reference file" action (`convertProjectToReference`). It flips
-  `type` only — every entry/atom stays attached (they key off the stable
-  container id), and the project-only fields
-  (`framework`/`framework_config`/`metrics`/`owners`/`completion`/
-  `next_meeting`/`category`/`emoji`/`color`) are **kept but go dormant**
-  (the reference view doesn't read them, so it's reversible). `program_id`
-  is cleared (a reference isn't a subproject). A `confirm()` warns what
-  stops showing and how many open actions move to the entry-list/People-only.
+- **Convert between project ⇄ reference file** (bidirectional): the Edit modal
+  has "→ Reference file" on a project (`convertProjectToReference`) and
+  "→ Project" on a reference (`convertReferenceToProject`). Both flip `type`
+  only — every entry/atom stays attached (they key off the stable container id).
+  Project→reference **keeps** the project-only fields
+  (`framework`/`framework_config`/`metrics`/`owners`/`completion`/`next_meeting`/
+  `category`/`emoji`/`color`) but they go **dormant** (the reference view doesn't
+  read them), and clears `program_id` (a reference isn't a subproject).
+  Reference→project re-activates any dormant fields (so a round-trip restores the
+  Overview) or, for a never-a-project reference, makes an unstructured project
+  (`framework:null`, `framework_config:{}`). Each direction `confirm()`s with a
+  plain summary of what changes; the pair is reversible and non-destructive.
 - **File import (ingestion entry point)**: dashboard "⤓ Import .md…"
   button → `openFileImport()`, and drag-drop on `.home` → both call
   `importTextFile(file)`. It reads the file (FileReader), makes a

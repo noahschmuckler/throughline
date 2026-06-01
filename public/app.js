@@ -2933,6 +2933,7 @@ function openEditContainerModal(c) {
     ${projectFields}
     <div class="modal-actions">
       ${isProject ? `<button class="btn ghost" data-act="to-reference" title="Turn this into an ongoing reference file (keeps all entries)">→ Reference file</button>` : ''}
+      ${c.type === 'reference_file' ? `<button class="btn ghost" data-act="to-project" title="Turn this into a tracked project (Overview, framework, glidepath)">→ Project</button>` : ''}
       <button class="btn danger" data-act="archive">${c.status === 'archived' ? 'Unarchive' : 'Archive'}</button>
       <button class="btn ghost" data-act="cancel">Cancel</button>
       <button class="btn primary" data-act="save">Save</button>
@@ -2949,6 +2950,7 @@ function openEditContainerModal(c) {
 
     modal.querySelector('[data-act="cancel"]').onclick = closeModal;
     modal.querySelector('[data-act="to-reference"]')?.addEventListener('click', () => convertProjectToReference(c));
+    modal.querySelector('[data-act="to-project"]')?.addEventListener('click', () => convertReferenceToProject(c));
     modal.querySelector('[data-act="archive"]').onclick = () => {
       c.status = c.status === 'archived' ? 'active' : 'archived';
       c.updated_at = nowIso();
@@ -3033,6 +3035,35 @@ function convertProjectToReference(c) {
   if (!confirm(lines.join('\n'))) return;
   c.type = 'reference_file';
   if (c.program_id) delete c.program_id;
+  c.updated_at = nowIso();
+  scheduleSave();
+  closeModal();
+  render();
+}
+
+// Convert a reference file → project (the reverse of the above). Non-destructive:
+// entries/atoms stay attached, and any dormant project fields kept from a prior
+// project→reference round-trip light back up. A reference that was never a
+// project simply becomes an unstructured project (framework null) — pick a shape
+// and add owners/metrics in the same Edit modal. Ensures the project shape
+// (framework/framework_config) so render code can rely on it this session.
+function convertReferenceToProject(c) {
+  if (c.type !== 'reference_file') return;
+  const hadMeta = !!(c.framework || (c.metrics || []).length || (c.owners || []).length);
+  const lines = [
+    `Convert “${c.title}” from a reference file into a project?`,
+    ``,
+    `Every entry and atom stays attached. It gains the project Overview — KPIs, a framework view, owners and a glidepath.`,
+    hadMeta
+      ? `Its previous project settings (framework / metrics / owners) come back.`
+      : `It starts unstructured — pick a framework (or leave it as-is) and add owners/metrics here in Edit.`,
+    ``,
+    `Proceed?`,
+  ];
+  if (!confirm(lines.join('\n'))) return;
+  c.type = 'project';
+  if (c.framework === undefined) c.framework = null;
+  if (!c.framework_config || typeof c.framework_config !== 'object') c.framework_config = {};
   c.updated_at = nowIso();
   scheduleSave();
   closeModal();
