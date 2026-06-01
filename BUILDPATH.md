@@ -499,6 +499,76 @@ remain unbroken throughout.
 
 ---
 
+## 9. Epic E1 — Folder-lens MVP (post-V1, ACTIVE)
+
+> The next sprint. Full design + rationale in `VISION.md`. Scope locked
+> 2026-05-31: **local-only** (no server/Graph yet — regulatory scrutiny;
+> multi-user via manual turn-taking), folder-lens slice **S0 + S1 + S3**: bind a
+> container to a real OneDrive folder, show its **live** files, and **open them
+> in their native app** (Excel/Word/Notepad) instead of downloading. Same
+> work-and-verify discipline as the V1 phases (§0–§5 still apply).
+>
+> **Epic-specific guardrails (in addition to §4):**
+> - **Path safety is critical.** Every fs path is resolved and validated to live
+>   under `ONEDRIVE_ROOT`; reject any `..`/absolute escape *before* touching the
+>   disk. A web UI must never be able to make the server read/open an arbitrary
+>   path. Add a test that escape attempts are refused.
+> - **fs endpoints are local-Node-only.** Implement `/api/fs/*` in `server.js`;
+>   the Worker (`src/index.js`) returns **501** (no local filesystem in the
+>   cloud) — same pattern as attachments. Front-end degrades gracefully.
+> - **Never write/delete in the bound tree** in this MVP — read + open only. The
+>   filesystem is the source of truth (lens, not vault).
+> - **Bindings are stored root-relative** (portable to Natalia's box later).
+> - **Verify on the Linux dev box:** use a fixture `ONEDRIVE_ROOT` with sample
+>   folders/files. The GUI launch from open-in-app won't fire in the sandbox —
+>   assert the *command + args constructed* and the path-validation instead.
+
+- [ ] **E1.0 · Config + file-access seam.** Add `ONEDRIVE_ROOT` to `.env.example`
+  (default = the folder containing `THROUGHLINE_DB`). New `lib/files.js`:
+  `rootDir()`, `resolveWithinRoot(rel)` (throws on escape), `listFolder(rel)` →
+  `{path, folders:[{name}], files:[{name,size,mtime,ext}]}`, `statSafe`. Local
+  `fs` impl behind a small interface so a Graph impl can slot in later.
+  **Verify:** node test — `resolveWithinRoot` rejects `../`/absolute escapes and
+  accepts in-tree paths; `listFolder` returns a fixture tree.
+
+- [ ] **E1.1 · `GET /api/fs/list` (both backends).** `server.js`: list a
+  root-relative path via `listFolder`; 400 on a bad/escaping path, 404 if
+  missing. `src/index.js`: `/api/fs/*` → 501. **Verify:** curl list a fixture
+  root; an escape attempt → 400/403; Worker route returns 501 (syntax-checked).
+
+- [ ] **E1.2 · Bind a container to a folder (data + in-app folder browser).**
+  Add `container.folder` (root-relative string|null) defaulted in
+  `normalizeContainer`. UI: a **"Bind folder"** control on project/reference
+  detail opens a **folder-browser modal** (lists the root via `/api/fs/list`,
+  navigate into subfolders, **"Use this folder"** sets `container.folder` +
+  saves). **Verify:** bind a demo container to a fixture folder; round-trips
+  through PUT; screenshot the browser modal + the bound state.
+
+- [ ] **E1.3 · Render the bound folder's live contents.** On project/reference
+  detail, when `container.folder` is set, show a **Files** section listing the
+  bound folder's live folders + files (via `/api/fs/list`), above/replacing the
+  copy-attachments block (which stays for now — deprecate later per T4).
+  **Verify:** screenshot a container showing live files from the fixture folder.
+
+- [ ] **E1.4 · Open-in-native-app.** `lib/files.js` `openFile(rel)`: validate
+  within root, spawn the platform opener detached (win32 `cmd /c start "" "<abs>"`,
+  darwin `open`, linux `xdg-open`). `server.js`: `POST /api/fs/open {path}`;
+  Worker → 501. UI: clicking a file in the bound listing calls `/api/fs/open`
+  instead of downloading. **Verify:** curl open on linux → asserts the correct
+  opener command + absolute path and returns ok (no 500); escape attempt
+  refused; screenshot the file list with the open wiring.
+
+- [ ] **E1.5 · Update `CLAUDE.md`.** Document `ONEDRIVE_ROOT`, the `lib/files.js`
+  file-access seam, the `/api/fs/list` + `/api/fs/open` endpoints (local-only,
+  Worker 501), `container.folder`, and the open-in-native-app behavior.
+
+**E1 Definition of Done:** point a project at a real OneDrive subfolder, see its
+actual files on the project page, and click a spreadsheet to open it in Excel —
+all local, with path-traversal blocked and the Worker cleanly 501-ing. Then it's
+ready to use solo and to demo the lens idea to Natalia.
+
+---
+
 ## 8. Progress log (append-only — the autonomous agent updates this)
 
 > Newest at top. One entry per completed task (or BLOCKED note). Include:
