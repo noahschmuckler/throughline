@@ -133,10 +133,15 @@ no UI changes). Add a **file-access seam** (`listFolder` / `readFile` /
 `openFile`) with a local-`fs` impl now and a Graph impl later, so single-user
 functionality we build now ports to either model.
 
-**De-risk before committing:** a thin **solo** server spike to learn the two
-unknowns — (1) can the server reach the OneDrive *materials* (a synced copy /
-network share / Graph)? (2) is SSO / app-registration feasible in this tenant?
-Those answers decide everything downstream. **Decision pending Noah's probe.**
+**DECIDED (2026-05-31): stay local for now.** Rationale: the software engineers
+warned that functional software *on the server* falls under heavier regulatory
+scrutiny — keep it on local devices until it's primetime-ready. Consequences
+we accept: multi-user is handled by **manual turn-taking** (Noah tells Natalia
+"don't touch it until you see my push; same in reverse") instead of an automated
+merge — so the **E2 merge engine stays deferred**. The folder-lens takes the
+simple local path (`fs` + shell-open), no Graph/SSO. The central server remains
+the plausible eventual home once it's primetime-ready; until then, keep building
+behind the **file-access seam** so that move stays cheap.
 
 ## Capabilities of the vision
 
@@ -272,32 +277,18 @@ verify-each-step discipline V1 used.
 
 ## Sprint plan (current)
 
-**Locked decisions (2026-05-31):** open-in-native-app pulled early (yes);
-lens-not-vault confirmed (yes); "shelf" is the word (yes); onboarding intelligence
-= heuristic **+ cdsapi `gpt-mini`** + user confirm.
+**Locked decisions (2026-05-31):** stay **local** (no server yet — regulatory
+scrutiny); multi-user handled by **manual turn-taking** for now (E2 merge engine
+**deferred**); open-in-native-app pulled early; lens-not-vault; "shelf" is the
+word; onboarding intelligence = heuristic + cdsapi `gpt-mini` + confirm.
 
-The "get something to Natalia soon to test sync" goal **reorders** the work —
-folder-lens features (S0/S1/S3) alone would still clobber on concurrent edits,
-which is the exact thing we want to study. So:
+**ACTIVE → Sprint 1: folder-lens MVP (E1 S0 + S1 + S3), local-only.**
+Bind a container to a real OneDrive folder, see its live files, and open them in
+their native apps (local `fs` + shell-open — no Graph). Useful to Noah solo
+immediately; if Natalia is in the same workspace, manual turn-taking covers it.
 
-- **Sprint 1 — sync MVP (E2 M0 + M1, + minimal M2)** on the *current* V1 app:
-  identity + 3-way auto-merge + flag the few real conflicts. This is literally
-  what we hand Natalia to test consolidation/conflict resolution.
-- **Sprint 2 — folder-lens MVP (E1 S0 + S1 + S3):** bind a container to a real
-  folder, see its live files, open them in their native apps.
-- **Then interleave** E1 S2/S4/S5 (viewer, onboarding, AI mapping) with E2 M3/M4
-  (workspaces, user onboarding); loop-de-loop intake (T6) stays downstream.
+Then: E1 S2/S4/S5 (viewer → onboarding → AI mapping). E2 (real multi-user) and
+loop-de-loop (T6) reopen when the server question does / it's primetime-ready.
 
-Once Sprint 1 is locked, it graduates into `BUILDPATH.md` as **Epic E2** with
-concrete per-task verify steps (same discipline V1 used).
-
-## Open questions for planning (E2 / sync)
-
-1. **Identity source** — auto-detect the **Windows username**, or a name set in
-   `.env`? (Needed for M0 / edit authorship.)
-2. **Confirm the multi-workspace model** — each shared OneDrive folder = a
-   workspace; a user can be in several; cross-dyad collaboration = a shared
-   workspace. (vs. any wish for one combined DB.)
-3. **Conflict philosophy** — OK to **auto-merge disjoint changes + flag only
-   same-object / same-field** conflicts (recommended), rather than always-manual
-   resolution?
+The three **E2 sync questions are parked** (identity source; multi-workspace
+model; conflict philosophy) — they only matter once we leave manual turn-taking.
