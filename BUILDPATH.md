@@ -575,6 +575,19 @@ ready to use solo and to demo the lens idea to Natalia.
 > date · task id · what changed · files · evidence (screenshot path /
 > curl transcript). This is how a future session knows what's done.
 
+- 2026-06-01 — **E1.3 follow-up: expandable folder tree (user request).** Orange
+  testing surfaced that bound subfolders looked clickable but didn't navigate.
+  Replaced the flat one-level listing with a lazily-loaded expandable tree:
+  `renderFolderFiles` now mounts `mountFsLevel(el, path)`, which renders folders
+  (toggle rows) then files, and each subfolder fetches its own children via
+  `/api/fs/list` only on first expand — arbitrary depth, nothing loads until
+  opened (keeps a big tree fast). Files still open via `/api/fs/open`. Files:
+  `public/app.js`, `public/styles.css` (`.fs-tree`/`.fs-row`/`.fs-children`),
+  `CLAUDE.md`. Evidence: nested fixture (`Project Alpha/analytics/{deep/,
+  cohort_q1.xlsx,cohort_q2.xlsx}`, `comms/email_draft.docx`, `master.xlsx`) —
+  `/tmp/tl_tree_expanded.png` shows analytics + comms expanded with their files,
+  `deep` collapsed and ready to drill further; subfolder list endpoint verified;
+  14/14 tests still pass; temp `?expand=` hook removed (grep 0).
 - 2026-05-31 — **E1.5 done → Epic E1 (folder-lens MVP) COMPLETE.** Documented the
   folder lens in `CLAUDE.md`: a new "Folder lens — `lib/files.js` + `/api/fs/*`"
   section (ONEDRIVE_ROOT, root-relative bindings, the `resolveWithinRoot` security

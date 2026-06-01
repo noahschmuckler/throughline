@@ -1051,28 +1051,66 @@ function fileIcon(ext) {
   return '📄';
 }
 
-// E1.3 — list the bound folder's LIVE folders + files via /api/fs/list. Files
-// carry data-file (root-relative) so E1.4 can wire open-in-native-app.
+// E1.3 — the bound folder as an expandable tree. The root level shows the bound
+// folder's contents; each subfolder lazily loads its own children via
+// /api/fs/list on first expand (keeps a big tree fast — nothing loads until you
+// open it). Files open in their native app (E1.4).
 async function renderFolderFiles(el, c) {
   if (!el || c.folder == null) return;
-  el.innerHTML = `<div class="muted small">Loading files…</div>`;
+  el.innerHTML = `<div class="fs-tree"></div>`;
+  await mountFsLevel(el.querySelector('.fs-tree'), c.folder || '');
+}
+
+// Load one folder's children into `mountEl` (folders first, then files). A
+// folder row toggles a nested child container, fetched lazily the first time
+// it's opened. Recurses to arbitrary depth.
+async function mountFsLevel(mountEl, path) {
+  mountEl.innerHTML = `<div class="muted small fs-loading">Loading…</div>`;
+  let data;
   try {
-    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(c.folder || '')}`);
-    if (r.status === 501) { el.innerHTML = `<div class="muted small">Live folder files are only available in the local app, not the cloud demo.</div>`; return; }
-    if (r.status === 404) { el.innerHTML = `<div class="folder-missing">⚠ Bound folder is missing on disk — re-bind or restore it.</div>`; return; }
+    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
+    if (r.status === 501) { mountEl.innerHTML = `<div class="muted small">Live folder files are only available in the local app, not the cloud demo.</div>`; return; }
+    if (r.status === 404) { mountEl.innerHTML = `<div class="folder-missing">⚠ Folder is missing on disk — re-bind or restore it.</div>`; return; }
     if (!r.ok) throw new Error(`list ${r.status}`);
-    const data = await r.json();
-    const folders = data.folders || [];
-    const files = data.files || [];
-    if (!folders.length && !files.length) { el.innerHTML = `<div class="muted small">This folder is empty.</div>`; return; }
-    el.innerHTML = `<div class="folder-list">
-      ${folders.map(f => `<span class="folder-file folder-row-folder">📁 ${escHtml(f.name)}</span>`).join('')}
-      ${files.map(f => `<button class="folder-file" data-file="${escHtml(fbJoin(c.folder || '', f.name))}" title="Open ${escHtml(f.name)} in its app">${fileIcon(f.ext)} ${escHtml(f.name)}<span class="folder-meta">${fmtBytes(f.size)}</span></button>`).join('')}
-    </div>`;
-    el.querySelectorAll('[data-file]').forEach(b => b.onclick = () => openBoundFile(b.dataset.file));
+    data = await r.json();
   } catch (e) {
     console.error(e);
-    el.innerHTML = `<div class="muted small">Couldn't read the folder.</div>`;
+    mountEl.innerHTML = `<div class="muted small">Couldn't read this folder.</div>`;
+    return;
+  }
+  const folders = data.folders || [];
+  const files = data.files || [];
+  mountEl.innerHTML = '';
+  if (!folders.length && !files.length) {
+    mountEl.innerHTML = `<div class="muted small fs-empty">Empty folder.</div>`;
+    return;
+  }
+  for (const f of folders) {
+    const childPath = fbJoin(path, f.name);
+    const row = document.createElement('button');
+    row.className = 'fs-row fs-folder';
+    row.innerHTML = `<span class="fs-twisty">▸</span><span class="fs-icon">📁</span><span class="fs-name">${escHtml(f.name)}</span>`;
+    const kids = document.createElement('div');
+    kids.className = 'fs-children';
+    kids.hidden = true;
+    let loaded = false;
+    row.onclick = async () => {
+      const twisty = row.querySelector('.fs-twisty');
+      if (!kids.hidden) { kids.hidden = true; twisty.textContent = '▸'; return; }
+      kids.hidden = false; twisty.textContent = '▾';
+      if (!loaded) { loaded = true; await mountFsLevel(kids, childPath); }
+    };
+    mountEl.appendChild(row);
+    mountEl.appendChild(kids);
+  }
+  for (const f of files) {
+    const filePath = fbJoin(path, f.name);
+    const row = document.createElement('button');
+    row.className = 'fs-row fs-file';
+    row.title = `Open ${f.name} in its app`;
+    row.innerHTML = `<span class="fs-twisty"></span><span class="fs-icon">${fileIcon(f.ext)}</span><span class="fs-name">${escHtml(f.name)}</span><span class="folder-meta">${fmtBytes(f.size)}</span>`;
+    row.onclick = () => openBoundFile(filePath);
+    mountEl.appendChild(row);
   }
 }
 

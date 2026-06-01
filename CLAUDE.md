@@ -165,8 +165,10 @@ filesystem is the source of truth). Full design in `VISION.md` (slice S0+S1+S3).
   (`renderFolderLens`): "🔗 Bind a folder" → `openFolderBrowser` (in-app modal
   that lists the root via `/api/fs/list`, navigates subfolders + breadcrumb,
   "Use this folder" sets `container.folder`); once bound it shows the **live**
-  files (`renderFolderFiles`) above the legacy copy-attachments block, and a
-  click on a file calls `/api/fs/open` (`openBoundFile`) instead of downloading.
+  files as an **expandable tree** (`renderFolderFiles` → `mountFsLevel`, which
+  lazily fetches each subfolder's children on first expand — so a deep/large tree
+  stays fast) above the legacy copy-attachments block, and a click on a file
+  calls `/api/fs/open` (`openBoundFile`) instead of downloading.
 - **Tests:** `test/files.test.mjs` (`npm test` / `node --test test/`) — covers
   the traversal refusals and the per-platform open command.
 
