@@ -17,6 +17,7 @@ import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { readState, writeState, dbPath } from './lib/store.js';
+import { listFolder, openFile } from './lib/files.js';
 import { atomizeEntry } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
 import { makeLLMCall } from './shared/llm.js';
@@ -166,6 +167,43 @@ async function serveAttachment(req, res, pathname) {
   }
 }
 
+// Folder-lens (Epic E1) — LOCAL ONLY. The Worker 501s these (no filesystem in
+// the cloud). Every path is root-relative and validated inside ONEDRIVE_ROOT by
+// lib/files.js before any disk access; an escape attempt → 400, missing → 404.
+async function handleFsList(req, res, url) {
+  if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  const rel = url.searchParams.get('path') || '';
+  try {
+    return sendJson(res, 200, await listFolder(rel));
+  } catch (err) {
+    if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'folder not found' });
+    if (/escapes ONEDRIVE_ROOT|absolute path not allowed|must be a string/.test(err.message)) {
+      return sendJson(res, 400, { error: err.message });
+    }
+    if (err.code === 'ENOTDIR') return sendJson(res, 400, { error: 'not a folder' });
+    return sendJson(res, 500, { error: err.message });
+  }
+}
+
+// Open a bound-tree file in its native app. Validates within ONEDRIVE_ROOT
+// before spawning the opener; never writes/deletes. Worker → 501.
+async function handleFsOpen(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  let body;
+  try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+  const rel = typeof body?.path === 'string' ? body.path : '';
+  if (!rel) return sendJson(res, 400, { error: 'path required' });
+  try {
+    return sendJson(res, 200, await openFile(rel));
+  } catch (err) {
+    if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'file not found' });
+    if (/escapes ONEDRIVE_ROOT|absolute path not allowed|must be a string|not a file/.test(err.message)) {
+      return sendJson(res, 400, { error: err.message });
+    }
+    return sendJson(res, 500, { error: err.message });
+  }
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -174,6 +212,8 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/api/classify') return await handleClassify(req, res);
     if (url.pathname === '/api/attachments') return await handleAttachmentUpload(req, res);
     if (url.pathname.startsWith('/api/attachments/')) return await serveAttachment(req, res, url.pathname);
+    if (url.pathname === '/api/fs/list') return await handleFsList(req, res, url);
+    if (url.pathname === '/api/fs/open') return await handleFsOpen(req, res);
     return await serveStatic(req, res, url.pathname);
   } catch (err) {
     console.error(err);

@@ -1142,6 +1142,35 @@ label.field > .label {
 .attach-item { display: inline-flex; align-items: center; gap: 5px; background: var(--card); border: 1px solid var(--card-edge); border-radius: 7px; padding: 5px 10px; font-size: 0.82rem; color: var(--thread); }
 .attach-item:hover { border-color: var(--thread-soft); }
 .attach-empty { padding: 2px 0; }
+
+/* Folder lens (Epic E1) */
+.folder-lens { margin-top: 14px; }
+.folder-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.folder-head .sec-label { margin-bottom: 0; }
+.folder-bound { font-family: var(--mono, ui-monospace, monospace); font-size: 0.8rem; background: var(--card); border: 1px solid var(--card-edge); border-radius: 6px; padding: 3px 9px; color: var(--thread); }
+.folder-files { margin-top: 4px; }
+.folder-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.folder-file { display: inline-flex; align-items: center; gap: 5px; background: var(--card); border: 1px solid var(--card-edge); border-radius: 7px; padding: 5px 10px; font: inherit; font-size: 0.82rem; color: var(--thread); cursor: pointer; text-align: left; }
+.folder-file:hover { border-color: var(--thread-soft); }
+.folder-row-folder { font-weight: 600; }
+.folder-meta { color: var(--mute); font-size: 0.72rem; margin-left: 4px; }
+.folder-missing { color: #c0392b; font-size: 0.82rem; }
+
+/* Folder-browser modal */
+.fb { border: 1px solid var(--card-edge); border-radius: 9px; padding: 10px; margin: 10px 0; max-height: 44vh; overflow-y: auto; background: #fff; }
+.fb-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; margin-bottom: 8px; font-size: 0.78rem; }
+.fb-crumb { background: none; border: none; color: var(--thread-soft); cursor: pointer; padding: 1px 4px; border-radius: 5px; font-size: 0.78rem; }
+.fb-crumb:hover { background: var(--card); }
+.fb-sep { color: var(--mute); }
+.fb-list { display: flex; flex-direction: column; gap: 3px; }
+.fb-row { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 6px; padding: 5px 8px; font-size: 0.85rem; color: var(--thread); }
+button.fb-row { cursor: pointer; }
+button.fb-row:hover { background: var(--card); border-color: var(--card-edge); }
+.fb-up { color: var(--thread-soft); }
+.fb-file { cursor: default; }
+.fb-empty { padding: 6px 8px; }
+.fb-current { margin-top: 8px; color: var(--mute); }
+
 .hdr-rag { display: flex; gap: 14px; margin-top: 8px; }
 .rag-count { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; color: rgba(255,255,255,0.85); }
 .rag-count .rag-dot { width: 9px; height: 9px; border-radius: 50%; }

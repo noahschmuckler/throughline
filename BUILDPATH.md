@@ -523,7 +523,7 @@ remain unbroken throughout.
 >   folders/files. The GUI launch from open-in-app won't fire in the sandbox —
 >   assert the *command + args constructed* and the path-validation instead.
 
-- [ ] **E1.0 · Config + file-access seam.** Add `ONEDRIVE_ROOT` to `.env.example`
+- [x] **E1.0 · Config + file-access seam.** Add `ONEDRIVE_ROOT` to `.env.example`
   (default = the folder containing `THROUGHLINE_DB`). New `lib/files.js`:
   `rootDir()`, `resolveWithinRoot(rel)` (throws on escape), `listFolder(rel)` →
   `{path, folders:[{name}], files:[{name,size,mtime,ext}]}`, `statSafe`. Local
@@ -531,12 +531,12 @@ remain unbroken throughout.
   **Verify:** node test — `resolveWithinRoot` rejects `../`/absolute escapes and
   accepts in-tree paths; `listFolder` returns a fixture tree.
 
-- [ ] **E1.1 · `GET /api/fs/list` (both backends).** `server.js`: list a
+- [x] **E1.1 · `GET /api/fs/list` (both backends).** `server.js`: list a
   root-relative path via `listFolder`; 400 on a bad/escaping path, 404 if
   missing. `src/index.js`: `/api/fs/*` → 501. **Verify:** curl list a fixture
   root; an escape attempt → 400/403; Worker route returns 501 (syntax-checked).
 
-- [ ] **E1.2 · Bind a container to a folder (data + in-app folder browser).**
+- [x] **E1.2 · Bind a container to a folder (data + in-app folder browser).**
   Add `container.folder` (root-relative string|null) defaulted in
   `normalizeContainer`. UI: a **"Bind folder"** control on project/reference
   detail opens a **folder-browser modal** (lists the root via `/api/fs/list`,
@@ -544,13 +544,13 @@ remain unbroken throughout.
   saves). **Verify:** bind a demo container to a fixture folder; round-trips
   through PUT; screenshot the browser modal + the bound state.
 
-- [ ] **E1.3 · Render the bound folder's live contents.** On project/reference
+- [x] **E1.3 · Render the bound folder's live contents.** On project/reference
   detail, when `container.folder` is set, show a **Files** section listing the
   bound folder's live folders + files (via `/api/fs/list`), above/replacing the
   copy-attachments block (which stays for now — deprecate later per T4).
   **Verify:** screenshot a container showing live files from the fixture folder.
 
-- [ ] **E1.4 · Open-in-native-app.** `lib/files.js` `openFile(rel)`: validate
+- [x] **E1.4 · Open-in-native-app.** `lib/files.js` `openFile(rel)`: validate
   within root, spawn the platform opener detached (win32 `cmd /c start "" "<abs>"`,
   darwin `open`, linux `xdg-open`). `server.js`: `POST /api/fs/open {path}`;
   Worker → 501. UI: clicking a file in the bound listing calls `/api/fs/open`
@@ -558,7 +558,7 @@ remain unbroken throughout.
   opener command + absolute path and returns ok (no 500); escape attempt
   refused; screenshot the file list with the open wiring.
 
-- [ ] **E1.5 · Update `CLAUDE.md`.** Document `ONEDRIVE_ROOT`, the `lib/files.js`
+- [x] **E1.5 · Update `CLAUDE.md`.** Document `ONEDRIVE_ROOT`, the `lib/files.js`
   file-access seam, the `/api/fs/list` + `/api/fs/open` endpoints (local-only,
   Worker 501), `container.folder`, and the open-in-native-app behavior.
 
@@ -575,6 +575,82 @@ ready to use solo and to demo the lens idea to Natalia.
 > date · task id · what changed · files · evidence (screenshot path /
 > curl transcript). This is how a future session knows what's done.
 
+- 2026-05-31 — **E1.5 done → Epic E1 (folder-lens MVP) COMPLETE.** Documented the
+  folder lens in `CLAUDE.md`: a new "Folder lens — `lib/files.js` + `/api/fs/*`"
+  section (ONEDRIVE_ROOT, root-relative bindings, the `resolveWithinRoot` security
+  gate, `listFolder`/`openFile`/`openCommandFor`, `/api/fs/list` + `/api/fs/open`
+  local-only with Worker 501, the front-end bind/browse/open flow, DRYRUN, and
+  `npm test`) plus the `container.folder` field in the data-model section. Files:
+  `CLAUDE.md`. Evidence: section matches the code landed in E1.0–E1.4; final
+  `node --test` → **14/14**, headless load of a bound container has no app JS
+  errors, no leftover temp hooks. **Epic E1 DoD met:** bind a project to a real
+  OneDrive subfolder → see its actual files on the project page → click a
+  spreadsheet to open it in Excel — all local, path-traversal blocked, Worker
+  cleanly 501-ing. Stopping here per the goal (do not start other epics/tickets).
+- 2026-05-31 — **E1.4 done.** Click a bound file → it opens in its native app
+  instead of downloading. `lib/files.js`: `openCommandFor(abs, plat)` (pure —
+  win32 `cmd /c start "" <abs>`, darwin `open`, linux `xdg-open`) +
+  `openFile(rel)` (validate within root → require a real file → spawn detached &
+  unref; `THROUGHLINE_OPEN_DRYRUN=1` skips the spawn for sandbox verification;
+  returns the constructed `{command,args}`). `server.js`: `POST /api/fs/open
+  {path}` (escape/folder → 400, missing → 404, GET → 405). Worker → 501 (the
+  existing `/api/fs/*` catch). UI: bound files are now `<button>`s wired to
+  `openBoundFile` → `/api/fs/open`. Files: `lib/files.js`, `server.js`,
+  `public/app.js`, `public/styles.css`, `test/files.test.mjs`. Evidence:
+  `node --test` → **14/14** (incl. per-platform command + traversal refusal +
+  folder/missing rejection); curl on :8821 (DRYRUN) → `{ok, command:"xdg-open",
+  args:["/tmp/tl_fs_fixture/CRM Cutover/master.xlsx"]}`, `../` escape → **400**,
+  folder → **400 not a file**, missing → **404**, GET → **405**, no path →
+  **400**; Worker `/api/fs/open` → **501** (earlier). `/tmp/tl_e14_open.png`
+  shows the clickable file buttons. Next: **E1.5** (CLAUDE.md).
+- 2026-05-31 — **E1.3 done.** A bound container now shows its folder's LIVE
+  contents. `renderFolderFiles` fetches `/api/fs/list?path=<folder>` and lists
+  subfolders + files (icon by ext via `fileIcon`, size via `fmtBytes`); each file
+  carries `data-file` (root-relative) for E1.4's open wiring. Renders in
+  `#folder-files` above the (now legacy) copy-attachments block, which stays for
+  now (deprecate per T4). 404 → "bound folder missing" notice; 501 → cloud
+  message. Files: `public/app.js`, `public/styles.css` (already added E1.2).
+  Evidence: `/tmp/tl_e13_files.png` — demo_crm_cutover bound to "CRM Cutover"
+  shows 📁 analytics, 📊 master.xlsx 5 B, 📝 notes.docx 3 B (dotfile excluded,
+  icons correct). Next: **E1.4** (open-in-native-app).
+- 2026-05-31 — **E1.2 done.** Containers can bind to a real OneDrive folder.
+  `normalizeContainer` now defaults `folder` (root-relative string|null) on
+  projects + reference files. New `#project-folder` section (`renderFolderLens`)
+  on project/ref detail: unbound → "🔗 Bind a folder"; bound → the path chip +
+  **Change**/**Unbind** (unbind nulls `folder`, never touches disk). "Bind"/"
+  Change" open `openFolderBrowser` — an in-app modal that lists the root via
+  `/api/fs/list`, navigates subfolders (clickable rows + a breadcrumb + ↑..),
+  and **"Use this folder"** sets `container.folder` + saves. 501 (cloud) degrades
+  to a clear message. Files: `public/app.js`, `public/index.html` (template div),
+  `public/styles.css`. Evidence: fixture root `/tmp/tl_fs_fixture`, seeded demo
+  on :8821 — `/tmp/tl_e12_fb.png` shows the browser modal (root: CRM Cutover +
+  top.txt, "Bind to: (root)"); PUT round-trip set `demo_crm_cutover.folder="CRM
+  Cutover"` and GET read it back; `/tmp/tl_e12_bound.png` shows the bound chip +
+  Change/Unbind. Temp `?fb=` boot-hook added then removed (grep 0). Next:
+  **E1.3** (render the bound folder's live contents).
+- 2026-05-31 — **E1.1 done.** `GET /api/fs/list` in both backends. `server.js`:
+  `handleFsList` reads `?path=<root-relative>`, calls `listFolder`, maps errors —
+  escape/absolute/non-string → **400**, ENOENT → **404**, ENOTDIR → 400, POST →
+  405. `src/index.js`: `/api/fs/list` (and any `/api/fs/*`) → **501** (no cloud
+  filesystem), mirroring the attachments pattern. Front-end will degrade on 501.
+  Files: `server.js`, `src/index.js`. Evidence: fixture root `/tmp/tl_fs_fixture`,
+  Node on :8821 — root list `{folders:[CRM Cutover], files:[top.txt]}`, subfolder
+  list (size/mtime/ext), `../tl_outside.txt` → **400** "path escapes
+  ONEDRIVE_ROOT", missing → **404**, POST → **405**; the live wrangler on :8787
+  returned **501** for both `/api/fs/list` and `/api/fs/open`. Next: **E1.2** (bind
+  a container to a folder + folder-browser modal).
+- 2026-05-31 — **E1.0 done (Epic E1 starts).** Added the folder-lens file-access
+  seam. New `lib/files.js`: `rootDir()` (ONEDRIVE_ROOT, default = THROUGHLINE_DB's
+  dir), `resolveWithinRoot(rel)` (rejects `..`/absolute escapes via a
+  `path.relative()` containment gate, *before* disk), `listFolder(rel)` →
+  `{path, folders:[{name}], files:[{name,size,mtime,ext}]}` (sorted, dotfiles
+  skipped), `statSafe`, `toRootRel`, and a `setFsBackend()` seam so a Graph impl
+  can replace local `fs` later. `ONEDRIVE_ROOT` documented in `.env.example`
+  (root-relative bindings, read+open only). Files: `lib/files.js`, `.env.example`,
+  `test/files.test.mjs`, `package.json` (`npm test`). Evidence: `node --test test/`
+  → **10/10 pass**, including traversal refusals (`../`, nested `../../`,
+  re-anchored absolutes) and the fixture-tree listing. Next: **E1.1**
+  (`GET /api/fs/list` in both backends).
 - 2026-05-31 — **Post-V1 UX tweaks (user preview feedback).** (1) The Edit
   modal ran off the bottom edge on tall content — `.modal` now has
   `max-height: calc(100vh - 96px); overflow-y:auto` and the shroud padding

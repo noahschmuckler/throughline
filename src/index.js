@@ -139,6 +139,12 @@ export default {
     if (url.pathname === '/api/attachments' || url.pathname.startsWith('/api/attachments/')) {
       return json({ error: 'Attachments are only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
     }
+    // Folder-lens (Epic E1) — the cloud demo has no local filesystem to read or
+    // open. Keep the routes present (identical contract) but 501 clearly so the
+    // front-end can degrade gracefully. Same pattern as attachments.
+    if (url.pathname === '/api/fs/list' || url.pathname.startsWith('/api/fs/')) {
+      return json({ error: 'Folder access is only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
+    }
     // Everything else: static assets from /public.
     return env.ASSETS.fetch(request);
   },

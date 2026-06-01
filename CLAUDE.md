@@ -134,6 +134,42 @@ the **same** API (`GET/PUT /api/state`, `POST /api/atomize`):
 The front-end is byte-for-byte identical against either backend — it
 only speaks REST. Writes are atomic-ish (tmp + rename) in `lib/store.js`.
 
+## Folder lens — `lib/files.js` + `/api/fs/*` (Epic E1, local-only)
+
+Throughline is a **lens** over the OneDrive filesystem, not a vault: a container
+can be **bound** to a real folder and show its *live* files, opening them in
+their native app — but it **never writes or deletes** in the bound tree (the
+filesystem is the source of truth). Full design in `VISION.md` (slice S0+S1+S3).
+
+- **`ONEDRIVE_ROOT`** (`.env`) — the root of the bound tree. Absolute (a OneDrive
+  path on orange) or relative to the repo root (fixtures/dev). **Defaults to the
+  folder holding `THROUGHLINE_DB`.** Bindings (`container.folder`) are stored
+  **root-relative** so they're portable between Noah's and Natalia's boxes.
+- **`lib/files.js`** — the file-access seam (local `node:fs` behind a
+  `setFsBackend()` interface so a Graph impl can slot in later). The
+  **security gate** is `resolveWithinRoot(rel)`: it rejects `..`/absolute escapes
+  via a `path.relative()` containment check **before any disk access** — a web UI
+  can never make the server touch a path outside `ONEDRIVE_ROOT`. Also
+  `rootDir()`, `listFolder(rel)` → `{path, folders:[{name}], files:[{name,size,
+  mtime,ext}]}` (sorted, dotfiles skipped), `statSafe`, `toRootRel`,
+  `openCommandFor(abs,plat)` (pure), and `openFile(rel)`.
+- **Endpoints (Node only):** `GET /api/fs/list?path=<root-rel>` (400 on
+  escape/bad path, 404 if missing) and `POST /api/fs/open {path}` (validate →
+  spawn the platform opener detached: win32 `cmd /c start "" <abs>`, darwin
+  `open`, linux `xdg-open`; returns the constructed `{command,args}`). The
+  **Worker 501s** all `/api/fs/*` (no cloud filesystem) — same pattern as
+  attachments; the front-end degrades with a clear message.
+  `THROUGHLINE_OPEN_DRYRUN=1` skips the actual GUI spawn (the sandbox can't launch
+  one) so the open path stays verifiable.
+- **Front-end:** project/reference detail has a **Folder** section
+  (`renderFolderLens`): "🔗 Bind a folder" → `openFolderBrowser` (in-app modal
+  that lists the root via `/api/fs/list`, navigates subfolders + breadcrumb,
+  "Use this folder" sets `container.folder`); once bound it shows the **live**
+  files (`renderFolderFiles`) above the legacy copy-attachments block, and a
+  click on a file calls `/api/fs/open` (`openBoundFile`) instead of downloading.
+- **Tests:** `test/files.test.mjs` (`npm test` / `node --test test/`) — covers
+  the traversal refusals and the per-platform open command.
+
 ## AI ingestion seam (stub today)
 
 `shared/atomize.js` + `shared/llm.js` are **runtime-agnostic** ESM (no
@@ -245,7 +281,10 @@ handled, everything else is static assets).
   `{ label, target, color, data:number[], interventions:[{idx,label}] }`
   (drives the glidepath). All optional — absent on references/inbox and
   on lean projects. A legacy project with `framework:null` renders exactly
-  as it did pre-v3.
+  as it did pre-v3. **Epic E1 added** on **projects + reference files**
+  `folder` (string|null — a **root-relative** path under `ONEDRIVE_ROOT` that
+  binds the container to a real OneDrive folder; null = unbound). Defaulted in
+  `normalizeContainer`; still schema_version 3, optional, backward-compatible.
 - **`people_meta`**: `{ [name]: { title, color, pathways[], reports[] } }`
   — optional overlay. People themselves are **derived** from atom
   `assigned_to` (see `derivePeople()`); `people_meta` only adds the

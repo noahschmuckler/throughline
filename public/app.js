@@ -33,6 +33,9 @@ function normalizeContainer(c) {
     program_id: c.program_id ?? null,                 // link to a parent program; null = standalone
     rag: c.rag ?? null,                               // 'green'|'amber'|'red'|null (null = derive)
   };
+  if (c.type === 'project' || c.type === 'reference_file') {
+    out.folder = typeof c.folder === 'string' ? c.folder : null; // bound OneDrive folder (root-relative); null = unbound
+  }
   if (c.type === 'project') {
     out.framework = c.framework ?? null;              // 'kanban'|'pdsa'|'milestone'|'timeline'|null
     out.framework_config = c.framework_config && typeof c.framework_config === 'object' ? c.framework_config : {};
@@ -1013,6 +1016,162 @@ async function uploadAttachment(c, file) {
   reader.readAsDataURL(file);
 }
 
+// ---------- Folder lens (Epic E1) ----------------------------------
+// A container can be BOUND to a real OneDrive folder (root-relative path under
+// ONEDRIVE_ROOT). Its files are a live view of that folder — Throughline reads
+// and opens them but never writes/deletes. fs endpoints are local-Node only;
+// the cloud demo 501s and the UI degrades to a clear message.
+
+const fbParent = (p) => (p && p.includes('/')) ? p.slice(0, p.lastIndexOf('/')) : '';
+const fbJoin = (base, name) => base ? `${base}/${name}` : name;
+function fbBreadcrumb(path) {
+  const parts = path ? path.split('/') : [];
+  let acc = '';
+  const crumbs = [`<button class="fb-crumb" data-nav="">⌂ root</button>`];
+  for (const p of parts) {
+    acc = acc ? `${acc}/${p}` : p;
+    crumbs.push(`<button class="fb-crumb" data-nav="${escHtml(acc)}">${escHtml(p)}</button>`);
+  }
+  return crumbs.join('<span class="fb-sep">›</span>');
+}
+
+function fmtBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+function fileIcon(ext) {
+  const e = (ext || '').toLowerCase();
+  if (['xlsx', 'xls', 'csv', 'xlsm'].includes(e)) return '📊';
+  if (['docx', 'doc', 'rtf'].includes(e)) return '📝';
+  if (['pptx', 'ppt'].includes(e)) return '📽️';
+  if (['pdf'].includes(e)) return '📕';
+  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(e)) return '🖼️';
+  return '📄';
+}
+
+// E1.3 — list the bound folder's LIVE folders + files via /api/fs/list. Files
+// carry data-file (root-relative) so E1.4 can wire open-in-native-app.
+async function renderFolderFiles(el, c) {
+  if (!el || c.folder == null) return;
+  el.innerHTML = `<div class="muted small">Loading files…</div>`;
+  try {
+    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(c.folder || '')}`);
+    if (r.status === 501) { el.innerHTML = `<div class="muted small">Live folder files are only available in the local app, not the cloud demo.</div>`; return; }
+    if (r.status === 404) { el.innerHTML = `<div class="folder-missing">⚠ Bound folder is missing on disk — re-bind or restore it.</div>`; return; }
+    if (!r.ok) throw new Error(`list ${r.status}`);
+    const data = await r.json();
+    const folders = data.folders || [];
+    const files = data.files || [];
+    if (!folders.length && !files.length) { el.innerHTML = `<div class="muted small">This folder is empty.</div>`; return; }
+    el.innerHTML = `<div class="folder-list">
+      ${folders.map(f => `<span class="folder-file folder-row-folder">📁 ${escHtml(f.name)}</span>`).join('')}
+      ${files.map(f => `<button class="folder-file" data-file="${escHtml(fbJoin(c.folder || '', f.name))}" title="Open ${escHtml(f.name)} in its app">${fileIcon(f.ext)} ${escHtml(f.name)}<span class="folder-meta">${fmtBytes(f.size)}</span></button>`).join('')}
+    </div>`;
+    el.querySelectorAll('[data-file]').forEach(b => b.onclick = () => openBoundFile(b.dataset.file));
+  } catch (e) {
+    console.error(e);
+    el.innerHTML = `<div class="muted small">Couldn't read the folder.</div>`;
+  }
+}
+
+// Open a bound file in its native app (Excel/Word/…) via the local server,
+// instead of downloading it. Local-Node only — the cloud demo 501s.
+async function openBoundFile(path) {
+  try {
+    const r = await fetch('/api/fs/open', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    if (r.status === 501) { alert('Opening files in their native app is only available in the local app, not the cloud demo.'); return; }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); alert(e.error || "Couldn't open that file."); return; }
+  } catch (e) {
+    console.error(e);
+    alert("Couldn't reach the file service.");
+  }
+}
+
+function renderFolderLens(main, c) {
+  const wrap = main.querySelector('#project-folder');
+  if (!wrap) return;
+  if (c.folder != null) {
+    wrap.innerHTML = `
+      <div class="folder-head"><span class="sec-label">📁 Folder</span>
+        <span class="folder-bound" title="bound OneDrive folder">${escHtml(c.folder || '(root)')}</span>
+        <button class="btn ghost tiny" data-act="change-folder">Change</button>
+        <button class="btn ghost tiny" data-act="unbind-folder">Unbind</button></div>
+      <div class="folder-files" id="folder-files"></div>`;
+    wrap.querySelector('[data-act="change-folder"]').onclick = () => openFolderBrowser(c);
+    wrap.querySelector('[data-act="unbind-folder"]').onclick = () => {
+      if (!confirm('Unbind this folder? The folder and its files on disk are not touched.')) return;
+      c.folder = null; c.updated_at = nowIso(); scheduleSave(); render();
+    };
+    renderFolderFiles(wrap.querySelector('#folder-files'), c);
+  } else {
+    wrap.innerHTML = `
+      <div class="folder-head"><span class="sec-label">📁 Folder</span>
+        <button class="btn ghost tiny" data-act="bind-folder">🔗 Bind a folder</button>
+        <span class="muted small">Show this ${escHtml(containerLabel(c))}'s real OneDrive files.</span></div>`;
+    wrap.querySelector('[data-act="bind-folder"]').onclick = () => openFolderBrowser(c);
+  }
+}
+
+// In-app folder browser over ONEDRIVE_ROOT: list folders via /api/fs/list,
+// navigate in, and "Use this folder" binds the current path (root-relative).
+function openFolderBrowser(c) {
+  let cur = (typeof c.folder === 'string') ? c.folder : '';
+  openModal(`
+    <h2 class="modal-title">Bind a folder</h2>
+    <p class="muted small">Pick the OneDrive folder whose files this ${escHtml(containerLabel(c))} should show. Throughline only reads and opens them — it never changes the folder.</p>
+    <div class="fb" id="fb"><div class="muted small">Loading…</div></div>
+    <div class="modal-actions">
+      <button class="btn ghost" data-act="cancel">Cancel</button>
+      <button class="btn primary" data-act="use">Use this folder</button>
+    </div>`, (modal) => {
+    const fb = modal.querySelector('#fb');
+    const useBtn = modal.querySelector('[data-act="use"]');
+    function paint(data) {
+      const folders = data.folders || [];
+      const files = data.files || [];
+      fb.innerHTML = `
+        <div class="fb-crumbs">${fbBreadcrumb(cur)}</div>
+        <div class="fb-list">
+          ${cur ? `<button class="fb-row fb-up" data-nav="${escHtml(fbParent(cur))}">↑ ..</button>` : ''}
+          ${folders.map(f => `<button class="fb-row fb-folder" data-nav="${escHtml(fbJoin(cur, f.name))}">📁 ${escHtml(f.name)}</button>`).join('')}
+          ${files.map(f => `<div class="fb-row fb-file muted">📄 ${escHtml(f.name)}</div>`).join('')}
+          ${(!folders.length && !files.length) ? `<div class="muted small fb-empty">(empty folder)</div>` : ''}
+        </div>
+        <div class="fb-current small">Bind to: <strong>${escHtml(cur || '(root)')}</strong></div>`;
+      fb.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => load(b.dataset.nav));
+    }
+    async function load(path) {
+      fb.innerHTML = `<div class="muted small">Loading…</div>`;
+      try {
+        const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
+        if (r.status === 501) { fb.innerHTML = `<div class="muted small">Folder browsing is only available in the local app, not the cloud demo.</div>`; useBtn.disabled = true; return; }
+        if (!r.ok) {
+          const msg = r.status === 404 ? 'That folder is missing.' : `Couldn't read that folder (${r.status}).`;
+          fb.innerHTML = `<div class="muted small">${msg} ${path ? `<button class="btn ghost tiny" data-nav-up="1">↑ Up</button>` : ''}</div>`;
+          const up = fb.querySelector('[data-nav-up]'); if (up) up.onclick = () => load(fbParent(path));
+          return;
+        }
+        const data = await r.json();
+        cur = data.path;
+        paint(data);
+      } catch (e) {
+        console.error(e);
+        fb.innerHTML = `<div class="muted small">Couldn't reach the file service.</div>`;
+      }
+    }
+    modal.querySelector('[data-act="cancel"]').onclick = () => closeModal();
+    useBtn.onclick = () => {
+      c.folder = cur; c.updated_at = nowIso(); scheduleSave(); closeModal(); render();
+    };
+    load(cur);
+  });
+}
+
 function renderContainer(main, c) {
   main.appendChild(tmpl('tpl-project'));
 
@@ -1060,8 +1219,11 @@ function renderContainer(main, c) {
     tagsDiv.appendChild(span);
   }
 
-  // Attachments (upload pathway) — projects + reference files only.
-  if (c.type === 'project' || c.type === 'reference_file') renderAttachments(main, c);
+  // Folder lens (Epic E1) + Attachments (upload pathway) — projects + refs only.
+  if (c.type === 'project' || c.type === 'reference_file') {
+    renderFolderLens(main, c);
+    renderAttachments(main, c);
+  }
 
   const editBtn = main.querySelector('[data-act="edit-project"]');
   if (c.type === 'inbox') {
