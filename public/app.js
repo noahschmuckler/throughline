@@ -1207,6 +1207,18 @@ function openFolderBrowser(c) {
 // the server task) and polls /api/setup/status until the restarted server reports
 // it's configured. Only reachable on the local Node backend.
 function renderSetup(main) {
+  main.innerHTML = `<section class="setup-wizard"><p class="muted small">Loading…</p></section>`;
+  // A configured install (e.g. an update that kept a bound .env) should never
+  // show the wizard, even if the installer navigated straight to #/setup.
+  fetch('/api/setup/status', { cache: 'no-store' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((s) => {
+      if (s && s.configured) { location.hash = '#/'; render(); } else renderSetupWizard(main);
+    })
+    .catch(() => renderSetupWizard(main));
+}
+
+function renderSetupWizard(main) {
   main.innerHTML = `
     <section class="setup-wizard">
       <h1 class="setup-title">Set up Throughline</h1>
