@@ -24,7 +24,7 @@ process.env.THROUGHLINE_ENV_FILE = ENV_FILE;
 process.env.THROUGHLINE_OPEN_DRYRUN = '1'; // never actually run schtasks
 
 const {
-  resolveWithinHome, listSetupFolder, writeEnvVars, bindFolder,
+  resolveWithinHome, listSetupFolder, writeEnvVars, bindFolder, dbInfo,
   restartServerTask, envFilePath,
 } = await import('../lib/setup.js');
 
@@ -77,14 +77,45 @@ test('writeEnvVars creates a fresh .env when none exists', async () => {
   assert.match(out, /^THROUGHLINE_DB=\/r\/state\.json$/m);
 });
 
-test('bindFolder writes ONEDRIVE_ROOT + THROUGHLINE_DB for an in-home folder', async () => {
-  const folder = join(FIX, 'OneDrive - Optum', 'Throughline');
+test('bindFolder defaults THROUGHLINE_DB to the Throughline subfolder', async () => {
+  const folder = join(FIX, 'OneDrive - Optum');
   const res = await bindFolder(folder);
   assert.equal(res.onedriveRoot, folder);
-  assert.equal(res.dbPath, join(folder, 'state.json'));
+  assert.equal(res.dbPath, join(folder, 'Throughline', 'state.json'));
   const out = await readFile(ENV_FILE, 'utf8');
   assert.ok(out.includes(`ONEDRIVE_ROOT=${folder}`));
-  assert.ok(out.includes(`THROUGHLINE_DB=${join(folder, 'state.json')}`));
+  assert.ok(out.includes(`THROUGHLINE_DB=${join(folder, 'Throughline', 'state.json')}`));
+});
+
+test('bindFolder honors an explicit dbAbsPath inside the chosen folder', async () => {
+  const folder = join(FIX, 'OneDrive - Optum');
+  const db = join(folder, 'Throughline', 'state.json');
+  const res = await bindFolder(folder, db);
+  assert.equal(res.dbPath, db);
+});
+
+test('bindFolder rejects a dbAbsPath outside the chosen folder', async () => {
+  const folder = join(FIX, 'OneDrive - Optum');
+  await assert.rejects(() => bindFolder(folder, join(FIX, 'elsewhere', 'state.json')), /inside the chosen folder/);
+});
+
+test('dbInfo reports candidates and reuses an existing workspace with counts', async () => {
+  const folder = join(FIX, 'OneDrive - Optum');
+  // Seed an existing workspace in the Throughline subfolder.
+  await mkdir(join(folder, 'Throughline'), { recursive: true });
+  await writeFile(
+    join(folder, 'Throughline', 'state.json'),
+    JSON.stringify({ containers: [
+      { type: 'project' }, { type: 'project' }, { type: 'program' }, { type: 'reference_file' },
+    ] }),
+  );
+  const info = await dbInfo(folder);
+  assert.equal(info.default, join(folder, 'Throughline', 'state.json'));
+  const tl = info.candidates.find((c) => c.rel === 'Throughline/state.json');
+  assert.ok(tl.recommended && tl.exists);
+  assert.deepEqual(tl.summary, { projects: 2, programs: 1, references: 1 });
+  const rootCand = info.candidates.find((c) => c.rel === 'state.json');
+  assert.equal(rootCand.exists, false);
 });
 
 test('bindFolder REJECTS a path outside the user profile', async () => {

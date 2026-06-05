@@ -1188,8 +1188,14 @@ button.fb-row:hover { background: var(--card); border-color: var(--card-edge); }
 .setup-title { font-family: var(--display); font-size: 1.8rem; margin: 0 0 8px; }
 .setup-lead { color: var(--thread-soft); margin: 0 0 14px; line-height: 1.5; }
 .setup-wizard .fb { max-height: 50vh; }
-.setup-actions { margin-top: 14px; }
+.setup-actions { margin-top: 14px; display: flex; gap: 10px; }
 .setup-msg { margin-top: 10px; color: var(--thread-soft); min-height: 1.2em; }
+.db-choice { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 4px 10px;
+  border: 1px solid var(--card-edge); border-radius: 9px; padding: 12px 14px; margin: 8px 0; cursor: pointer; background: #fff; }
+.db-choice:hover { border-color: var(--thread); }
+.db-choice input { grid-row: span 2; align-self: center; }
+.db-rel { font-weight: 600; color: var(--thread); }
+.db-detail { grid-column: 2; color: var(--thread-soft); font-size: 0.85rem; }
 
 .hdr-rag { display: flex; gap: 14px; margin-top: 8px; }
 .rag-count { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; color: rgba(255,255,255,0.85); }

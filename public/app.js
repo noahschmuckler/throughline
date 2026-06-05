@@ -1218,6 +1218,7 @@ function renderSetup(main) {
     .catch(() => renderSetupWizard(main));
 }
 
+// Step 1 — pick the shared OneDrive folder (the lens root).
 function renderSetupWizard(main) {
   main.innerHTML = `
     <section class="setup-wizard">
@@ -1225,13 +1226,11 @@ function renderSetupWizard(main) {
       <p class="setup-lead">Pick your shared OneDrive folder — the one shared with your dyad partner (look under <strong>OneDrive&nbsp;-&nbsp;…</strong>). Throughline reads its files and keeps your shared projects there. It never changes your files.</p>
       <div class="fb" id="setup-fb"><div class="muted small">Loading…</div></div>
       <div class="setup-actions">
-        <button class="btn primary" id="setup-use" disabled>Use this folder</button>
+        <button class="btn primary" id="setup-use" disabled>Next →</button>
       </div>
-      <div class="setup-msg small" id="setup-msg"></div>
     </section>`;
   const fb = main.querySelector('#setup-fb');
   const useBtn = main.querySelector('#setup-use');
-  const msg = main.querySelector('#setup-msg');
   let picked = { path: '', absPath: '' };
   mountBrowser(fb, {
     listUrl: '/api/setup/browse',
@@ -1239,25 +1238,74 @@ function renderSetupWizard(main) {
     bindLabel: 'Use folder',
     onLoad: (st) => { if (st) picked = st; useBtn.disabled = !st || !st.absPath; },
   });
+  useBtn.onclick = () => { if (picked.absPath) renderSetupDbStep(main, picked); };
+}
+
+// Step 2 — choose where the workspace data (state.json) lives. Defaults to the
+// tidy `Throughline` subfolder and surfaces an existing workspace (with counts)
+// to reuse — so a second dyad member just confirms the team's workspace.
+function renderSetupDbStep(main, root) {
+  main.innerHTML = `
+    <section class="setup-wizard">
+      <h1 class="setup-title">Where should your workspace live?</h1>
+      <p class="setup-lead">Inside <strong>${escHtml(root.path || root.absPath)}</strong>. We recommend a <strong>Throughline</strong> subfolder so the shared root stays tidy.</p>
+      <div id="db-choices"><div class="muted small">Checking this folder…</div></div>
+      <div class="setup-actions">
+        <button class="btn ghost" id="db-back">← Back</button>
+        <button class="btn primary" id="db-use" disabled>Use this location</button>
+      </div>
+      <div class="setup-msg small" id="setup-msg"></div>
+    </section>`;
+  const choices = main.querySelector('#db-choices');
+  const useBtn = main.querySelector('#db-use');
+  const msg = main.querySelector('#setup-msg');
+  main.querySelector('#db-back').onclick = () => renderSetupWizard(main);
+  let selectedDb = '';
+
+  fetch(`/api/setup/dbinfo?folder=${encodeURIComponent(root.absPath)}`)
+    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then((info) => {
+      const cands = info.candidates || [];
+      choices.innerHTML = cands.map((c, i) => {
+        const s = c.summary;
+        const plur = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+        const detail = c.exists
+          ? (s ? `✓ Existing workspace — ${plur(s.projects, 'project')}, ${plur(s.programs, 'program')}, ${plur(s.references, 'reference')}` : '✓ Existing workspace')
+          : (c.recommended ? 'New — will be created here' : 'New — empty');
+        const label = escHtml(c.rel) + (c.recommended ? ' <span class="muted small">(recommended)</span>' : '');
+        return `<label class="db-choice"><input type="radio" name="db" value="${escHtml(c.path)}" data-i="${i}">
+          <span class="db-rel">${label}</span><span class="db-detail">${escHtml(detail)}</span></label>`;
+      }).join('') || `<div class="muted small">No options found.</div>`;
+      const radios = [...choices.querySelectorAll('input[name=db]')];
+      radios.forEach((rd) => { rd.onchange = () => { selectedDb = rd.value; useBtn.disabled = false; }; });
+      // Default: first existing workspace (reuse the team's data), else recommended.
+      let idx = cands.findIndex((c) => c.exists);
+      if (idx < 0) idx = cands.findIndex((c) => c.recommended);
+      if (idx < 0) idx = 0;
+      if (radios[idx]) { radios[idx].checked = true; selectedDb = radios[idx].value; useBtn.disabled = false; }
+    })
+    .catch(() => {
+      choices.innerHTML = `<div class="muted small">Couldn't read this folder — we'll create the default Throughline workspace.</div>`;
+      selectedDb = ''; // bind falls back to the Throughline-subfolder default
+      useBtn.disabled = false;
+    });
+
   useBtn.onclick = async () => {
-    if (!picked.absPath) return;
     useBtn.disabled = true;
-    msg.textContent = 'Saving your folder…';
+    msg.textContent = 'Saving your workspace…';
     try {
       const r = await fetch('/api/setup/bind', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ folderAbsPath: picked.absPath }),
+        body: JSON.stringify({ folderAbsPath: root.absPath, dbAbsPath: selectedDb || undefined }),
       });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        msg.textContent = `Couldn't use that folder: ${e.error || r.status}`;
+        msg.textContent = `Couldn't save: ${e.error || r.status}`;
         useBtn.disabled = false;
         return;
       }
       const data = await r.json().catch(() => ({}));
-      // The binding is applied live, so the server is already configured. Load
-      // the workspace. (Surface the online-only warning briefly if present.)
       if (data.warning) msg.textContent = data.warning;
       location.hash = '#/';
       await loadState();

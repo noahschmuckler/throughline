@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readState, writeState, dbPath } from './lib/store.js';
 import { listFolder, openFile } from './lib/files.js';
-import { setupStatus, listSetupFolder, bindFolder } from './lib/setup.js';
+import { setupStatus, listSetupFolder, bindFolder, dbInfo } from './lib/setup.js';
 import { atomizeEntry } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
 import { makeLLMCall } from './shared/llm.js';
@@ -229,14 +229,28 @@ async function handleSetupBrowse(req, res, url) {
   }
 }
 
+// Candidate workspace-DB locations for a chosen lens root (Throughline subfolder
+// vs root), with existing-workspace detection so the wizard can default + reuse.
+async function handleSetupDbInfo(req, res, url) {
+  if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  const folder = url.searchParams.get('folder') || '';
+  try {
+    return sendJson(res, 200, await dbInfo(folder));
+  } catch (err) {
+    if (/inside your user profile|absolute path/.test(err.message)) return sendJson(res, 400, { error: err.message });
+    return sendJson(res, 500, { error: err.message });
+  }
+}
+
 async function handleSetupBind(req, res) {
   if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
   let body;
   try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
   const folderAbsPath = typeof body?.folderAbsPath === 'string' ? body.folderAbsPath : '';
+  const dbAbsPath = typeof body?.dbAbsPath === 'string' ? body.dbAbsPath : '';
   let result;
   try {
-    result = await bindFolder(folderAbsPath);
+    result = await bindFolder(folderAbsPath, dbAbsPath);
   } catch (err) {
     if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'folder not found' });
     return sendJson(res, 400, { error: err.message });
@@ -258,6 +272,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/api/fs/open') return await handleFsOpen(req, res);
     if (url.pathname === '/api/setup/status') return await handleSetupStatus(req, res);
     if (url.pathname === '/api/setup/browse') return await handleSetupBrowse(req, res, url);
+    if (url.pathname === '/api/setup/dbinfo') return await handleSetupDbInfo(req, res, url);
     if (url.pathname === '/api/setup/bind') return await handleSetupBind(req, res);
     return await serveStatic(req, res, url.pathname);
   } catch (err) {
