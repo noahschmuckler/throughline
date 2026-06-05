@@ -37,10 +37,11 @@ $TaskName = "ThroughlineServer"
 $Port     = 8787
 $Root     = Join-Path $env:USERPROFILE $AppName
 
-# The distributor base URL (meridian-briefing on the CR DEV server). Override with
-# $env:THROUGHLINE_BUNDLE_URL if the host/path differs.
+# The distributor base URL (meridian-briefing on the CR DEV server). Plain HTTP on
+# :8080 is how Billy currently exposes the site — update this if that changes.
+# Override at run time with $env:THROUGHLINE_BUNDLE_URL.
 $BundleBaseUrl = $env:THROUGHLINE_BUNDLE_URL
-if (-not $BundleBaseUrl) { $BundleBaseUrl = "https://cdseastdev.ms.ds.uhc.com/throughline" }
+if (-not $BundleBaseUrl) { $BundleBaseUrl = "http://cdseastdev.ms.ds.uhc.com:8080/throughline" }
 
 $Tmp = Join-Path $env:TEMP ("throughline-dl-" + [Guid]::NewGuid().ToString("N"))
 function Remove-Tmp {
