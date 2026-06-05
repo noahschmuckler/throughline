@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readState, writeState, dbPath } from './lib/store.js';
 import { listFolder, openFile } from './lib/files.js';
-import { setupStatus, listSetupFolder, bindFolder, restartServerTask } from './lib/setup.js';
+import { setupStatus, listSetupFolder, bindFolder } from './lib/setup.js';
 import { atomizeEntry } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
 import { makeLLMCall } from './shared/llm.js';
@@ -241,12 +241,9 @@ async function handleSetupBind(req, res) {
     if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'folder not found' });
     return sendJson(res, 400, { error: err.message });
   }
-  // Flush the response FIRST — the restart ends our own task (killing this
-  // process), so we must not still be mid-response when it fires.
-  sendJson(res, 200, { ok: true, restarting: true, ...result });
-  setTimeout(() => {
-    try { restartServerTask(); } catch (err) { console.error('restart failed', err); }
-  }, 250);
+  // bindFolder applied the binding to process.env live (no task restart needed),
+  // so the server is configured the moment this returns.
+  return sendJson(res, 200, { ok: true, configured: true, ...result });
 }
 
 const server = createServer(async (req, res) => {

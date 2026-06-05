@@ -1230,7 +1230,7 @@ function renderSetup(main) {
   useBtn.onclick = async () => {
     if (!picked.absPath) return;
     useBtn.disabled = true;
-    msg.textContent = 'Saving and restarting Throughline…';
+    msg.textContent = 'Saving your folder…';
     try {
       const r = await fetch('/api/setup/bind', {
         method: 'POST',
@@ -1244,36 +1244,17 @@ function renderSetup(main) {
         return;
       }
       const data = await r.json().catch(() => ({}));
-      msg.textContent = (data.warning ? data.warning + ' ' : '') + 'Saving and restarting Throughline…';
-      pollSetupReady(msg);
+      // The binding is applied live, so the server is already configured. Load
+      // the workspace. (Surface the online-only warning briefly if present.)
+      if (data.warning) msg.textContent = data.warning;
+      location.hash = '#/';
+      await loadState();
+      render();
     } catch (e) {
-      // The restart can drop the socket; treat as success-in-progress and poll.
-      msg.textContent = 'Saved — waiting for Throughline to restart…';
-      pollSetupReady(msg);
+      msg.textContent = "Saved, but couldn't reach the server — refresh this page.";
+      useBtn.disabled = false;
     }
   };
-}
-
-// Poll until the restarted server reports configured; connection-refused just
-// means it's mid-restart, not a failure.
-async function pollSetupReady(msg, tries = 0) {
-  if (tries > 30) {
-    msg.textContent = 'Still restarting — please refresh this page in a moment.';
-    return;
-  }
-  try {
-    const r = await fetch('/api/setup/status', { cache: 'no-store' });
-    if (r.ok) {
-      const s = await r.json();
-      if (s.configured) {
-        location.hash = '#/';
-        await loadState();
-        render();
-        return;
-      }
-    }
-  } catch (e) { /* still restarting */ }
-  setTimeout(() => pollSetupReady(msg, tries + 1), 1000);
 }
 
 // On a fresh local install ONEDRIVE_ROOT isn't configured yet — send the user to
