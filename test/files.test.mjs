@@ -24,7 +24,7 @@ await writeFile(join(ROOT, 'top.txt'), 'top');
 // A sibling OUTSIDE the root, to prove traversal can't reach it.
 await writeFile(join(ROOT, '..', 'tl-outside-secret.txt'), 'do not read me');
 
-const { resolveWithinRoot, listFolder, statSafe, toRootRel, rootDir, openFile, openCommandFor } =
+const { resolveWithinRoot, listFolder, statSafe, toRootRel, rootDir, openFile, openCommandFor, setFsBackend } =
   await import('../lib/files.js');
 
 test('rootDir resolves to the configured ONEDRIVE_ROOT', () => {
@@ -122,6 +122,39 @@ test('openFile REFUSES a traversal escape (before any spawn)', async () => {
 test('openFile rejects a folder and a missing file', async () => {
   await assert.rejects(() => openFile('CRM Cutover'), /not a file/);
   await assert.rejects(() => openFile('CRM Cutover/nope.xlsx'), (e) => e.code === 'ENOENT');
+});
+
+// Reparse points — OneDrive cloud-sync roots ("OneDrive - UHG") and shared-folder
+// shortcuts ("Peden, …'s files") — report as neither dir nor file. We resolve
+// them with stat() so a bound OneDrive folder is browsable; a stat failure (an
+// ACL-denied legacy junction) drops the entry. Mock the backend to prove it.
+test('listFolder surfaces reparse-point dirs and drops stat-denied ones', async () => {
+  const dirent = (name, kind) => ({
+    name,
+    isDirectory: () => kind === 'dir',
+    isFile: () => kind === 'file',
+    isSymbolicLink: () => kind === 'reparse',
+  });
+  setFsBackend({
+    readdir: async () => [
+      dirent('Normal', 'dir'),
+      dirent('OneDrive - UHG', 'reparse'),       // resolves → directory
+      dirent('note.txt', 'file'),
+      dirent('My Documents', 'reparse'),          // stat throws → dropped
+    ],
+    stat: async (abs) => {
+      if (abs.endsWith('OneDrive - UHG')) return { isDirectory: () => true, isFile: () => false, size: 0, mtime: new Date() };
+      if (abs.endsWith('note.txt')) return { isDirectory: () => false, isFile: () => true, size: 3, mtime: new Date() };
+      throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    },
+  });
+  try {
+    const r = await listFolder('');
+    assert.deepEqual(r.folders.map((f) => f.name).sort(), ['Normal', 'OneDrive - UHG']);
+    assert.deepEqual(r.files.map((f) => f.name), ['note.txt']);
+  } finally {
+    setFsBackend(null); // restore the real fs backend
+  }
 });
 
 test.after(async () => {
