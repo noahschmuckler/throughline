@@ -1183,6 +1183,14 @@ button.fb-row:hover { background: var(--card); border-color: var(--card-edge); }
 .fb-empty { padding: 6px 8px; }
 .fb-current { margin-top: 8px; color: var(--mute); }
 
+/* First-run setup wizard (#/setup) */
+.setup-wizard { max-width: 640px; margin: 28px auto; }
+.setup-title { font-family: var(--display); font-size: 1.8rem; margin: 0 0 8px; }
+.setup-lead { color: var(--thread-soft); margin: 0 0 14px; line-height: 1.5; }
+.setup-wizard .fb { max-height: 50vh; }
+.setup-actions { margin-top: 14px; }
+.setup-msg { margin-top: 10px; color: var(--thread-soft); min-height: 1.2em; }
+
 .hdr-rag { display: flex; gap: 14px; margin-top: 8px; }
 .rag-count { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; color: rgba(255,255,255,0.85); }
 .rag-count .rag-dot { width: 9px; height: 9px; border-radius: 50%; }

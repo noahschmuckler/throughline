@@ -2,18 +2,20 @@
 # Bundle Throughline for orange-device deployment.
 #
 # Produces  dist/throughline-<sha>.zip  plus  dist/install-throughline-<sha>.ps1.txt
-# (a PowerShell installer that expects the zip to be extracted alongside it).
+#
+# The installer is a SELF-DOWNLOADING bootstrapper: it fetches the zip from the
+# meridian-briefing distributor at run time, so the zip does NOT need to sit
+# beside it. The normal distribution path is `deploy/publish-throughline.sh`,
+# which copies these two files (+ a manifest) into meridian-briefing/public/
+# throughline/ under stable names. bundle.sh is the building block it calls.
 #
 # Unlike atom_sandbox, Throughline's Node server has NO npm runtime deps (only
 # node: builtins + global fetch), so there is no node_modules to vendor — the
 # bundle is just source. We also do NOT ship data/ or the seed scripts: orange
 # starts BLANK and points THROUGHLINE_DB at a OneDrive folder.
 #
-# Workflow:
-#   1. cd ~/GitHub_Repos/throughline
-#   2. bash deploy/bundle.sh
-#   3. Move both dist files to OneDrive (synced folder, or your tailscale flow).
-#   4. On orange: rename .ps1.txt -> .ps1, extract the zip alongside it, run it.
+# Workflow (normal): cd ~/GitHub_Repos/throughline && bash deploy/publish-throughline.sh
+# Workflow (this script standalone): bash deploy/bundle.sh  → inspect dist/.
 
 set -euo pipefail
 
@@ -59,18 +61,10 @@ echo "  wrote $PS1"
 
 cat <<EOF
 
-Next steps (on the orange box):
-  1. Save the .ps1.txt to %USERPROFILE%\\throughline-deploy\\ and rename to .ps1
-  2. Extract the .zip alongside it (so install-throughline-${SHA}.ps1 sits next
-     to a folder named throughline-${SHA}\\  or  throughline\\)
-  3. Run it:
-       & "\$env:USERPROFILE\\throughline-deploy\\install-throughline-${SHA}.ps1"
-  4. Edit %USERPROFILE%\\throughline\\.env:
-       THROUGHLINE_DB=C:\\Users\\<you>\\OneDrive - <org>\\Throughline\\state.json
-       LLM_PROVIDER=cdsapi
-     then restart:
-       Stop-ScheduledTask -TaskName ThroughlineServer ; Start-ScheduledTask -TaskName ThroughlineServer
-  5. Open http://127.0.0.1:8787
+Built dist/. To distribute, run:  bash deploy/publish-throughline.sh
+  (copies these into meridian-briefing/public/throughline/ under stable names;
+   users then download the installer from the Throughline tile on meridian-briefing
+   and it self-downloads this zip + opens the in-app setup wizard).
 
-See deploy/README-orange.md for the full operator guide + the shared-OneDrive caveat.
+See deploy/README-orange.md for the operator guide + the shared-OneDrive caveat.
 EOF

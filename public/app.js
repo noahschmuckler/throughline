@@ -506,6 +506,7 @@ function dashboardSummary() {
 function currentRoute() {
   const h = location.hash.replace(/^#/, '');
   if (!h || h === '/') return { kind: 'home', view: 'projects' };
+  if (h === '/setup') return { kind: 'setup' };
   if (h === '/people') return { kind: 'home', view: 'people' };
   const m = h.match(/^\/c\/(.+)$/);
   if (m) return { kind: 'container', id: decodeURIComponent(m[1]) };
@@ -520,7 +521,9 @@ function render() {
   const main = document.getElementById('main');
   main.innerHTML = '';
   const r = currentRoute();
-  if (r.kind === 'home') {
+  if (r.kind === 'setup') {
+    renderSetup(main);
+  } else if (r.kind === 'home') {
     if (r.view) ui.homeView = r.view;
     renderHome(main);
   } else if (r.kind === 'container') {
@@ -1120,8 +1123,62 @@ function renderFolderLens(main, c) {
 
 // In-app folder browser over ONEDRIVE_ROOT: list folders via /api/fs/list,
 // navigate in, and "Use this folder" binds the current path (root-relative).
+// Shared lazy folder browser used by BOTH the lens binder (rooted at
+// ONEDRIVE_ROOT via /api/fs/list) and the first-run setup wizard (rooted at the
+// user's HOME via /api/setup/browse). Renders into `mountEl`, navigates folders
+// by their list-relative path, and calls opts.onLoad({path, absPath}) after each
+// successful load (null on 501/error) so the caller can enable its "use" button
+// and read the current selection. `absPath` is only present from setup/browse.
+function mountBrowser(mountEl, opts) {
+  let cur = opts.initialPath || '';
+  let curAbs = '';
+  function paint(data) {
+    const folders = data.folders || [];
+    const files = data.files || [];
+    mountEl.innerHTML = `
+      <div class="fb-crumbs">${fbBreadcrumb(cur)}</div>
+      <div class="fb-list">
+        ${cur ? `<button class="fb-row fb-up" data-nav="${escHtml(fbParent(cur))}">↑ ..</button>` : ''}
+        ${folders.map(f => `<button class="fb-row fb-folder" data-nav="${escHtml(fbJoin(cur, f.name))}">📁 ${escHtml(f.name)}</button>`).join('')}
+        ${files.map(f => `<div class="fb-row fb-file muted">📄 ${escHtml(f.name)}</div>`).join('')}
+        ${(!folders.length && !files.length) ? `<div class="muted small fb-empty">(empty folder)</div>` : ''}
+      </div>
+      <div class="fb-current small">${opts.bindLabel || 'Bind to'}: <strong>${escHtml(curAbs || cur || '(root)')}</strong></div>`;
+    mountEl.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => load(b.dataset.nav));
+  }
+  async function load(path) {
+    mountEl.innerHTML = `<div class="muted small">Loading…</div>`;
+    try {
+      const r = await fetch(`${opts.listUrl}?path=${encodeURIComponent(path)}`);
+      if (r.status === 501) {
+        mountEl.innerHTML = `<div class="muted small">Folder browsing is only available in the local app, not the cloud demo.</div>`;
+        opts.onLoad && opts.onLoad(null);
+        return;
+      }
+      if (!r.ok) {
+        const msg = r.status === 404 ? 'That folder is missing.' : `Couldn't read that folder (${r.status}).`;
+        mountEl.innerHTML = `<div class="muted small">${msg} ${path ? `<button class="btn ghost tiny" data-nav-up="1">↑ Up</button>` : ''}</div>`;
+        const up = mountEl.querySelector('[data-nav-up]'); if (up) up.onclick = () => load(fbParent(path));
+        opts.onLoad && opts.onLoad(null);
+        return;
+      }
+      const data = await r.json();
+      cur = data.path;
+      curAbs = data.absPath || '';
+      paint(data);
+      opts.onLoad && opts.onLoad({ path: cur, absPath: curAbs });
+    } catch (e) {
+      console.error(e);
+      mountEl.innerHTML = `<div class="muted small">Couldn't reach the file service.</div>`;
+      opts.onLoad && opts.onLoad(null);
+    }
+  }
+  load(cur);
+}
+
 function openFolderBrowser(c) {
-  let cur = (typeof c.folder === 'string') ? c.folder : '';
+  const initial = (typeof c.folder === 'string') ? c.folder : '';
+  let picked = { path: initial, absPath: '' };
   openModal(`
     <h2 class="modal-title">Bind a folder</h2>
     <p class="muted small">Pick the OneDrive folder whose files this ${escHtml(containerLabel(c))} should show. Throughline only reads and opens them — it never changes the folder.</p>
@@ -1132,45 +1189,103 @@ function openFolderBrowser(c) {
     </div>`, (modal) => {
     const fb = modal.querySelector('#fb');
     const useBtn = modal.querySelector('[data-act="use"]');
-    function paint(data) {
-      const folders = data.folders || [];
-      const files = data.files || [];
-      fb.innerHTML = `
-        <div class="fb-crumbs">${fbBreadcrumb(cur)}</div>
-        <div class="fb-list">
-          ${cur ? `<button class="fb-row fb-up" data-nav="${escHtml(fbParent(cur))}">↑ ..</button>` : ''}
-          ${folders.map(f => `<button class="fb-row fb-folder" data-nav="${escHtml(fbJoin(cur, f.name))}">📁 ${escHtml(f.name)}</button>`).join('')}
-          ${files.map(f => `<div class="fb-row fb-file muted">📄 ${escHtml(f.name)}</div>`).join('')}
-          ${(!folders.length && !files.length) ? `<div class="muted small fb-empty">(empty folder)</div>` : ''}
-        </div>
-        <div class="fb-current small">Bind to: <strong>${escHtml(cur || '(root)')}</strong></div>`;
-      fb.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => load(b.dataset.nav));
-    }
-    async function load(path) {
-      fb.innerHTML = `<div class="muted small">Loading…</div>`;
-      try {
-        const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
-        if (r.status === 501) { fb.innerHTML = `<div class="muted small">Folder browsing is only available in the local app, not the cloud demo.</div>`; useBtn.disabled = true; return; }
-        if (!r.ok) {
-          const msg = r.status === 404 ? 'That folder is missing.' : `Couldn't read that folder (${r.status}).`;
-          fb.innerHTML = `<div class="muted small">${msg} ${path ? `<button class="btn ghost tiny" data-nav-up="1">↑ Up</button>` : ''}</div>`;
-          const up = fb.querySelector('[data-nav-up]'); if (up) up.onclick = () => load(fbParent(path));
-          return;
-        }
-        const data = await r.json();
-        cur = data.path;
-        paint(data);
-      } catch (e) {
-        console.error(e);
-        fb.innerHTML = `<div class="muted small">Couldn't reach the file service.</div>`;
-      }
-    }
     modal.querySelector('[data-act="cancel"]').onclick = () => closeModal();
     useBtn.onclick = () => {
-      c.folder = cur; c.updated_at = nowIso(); scheduleSave(); closeModal(); render();
+      c.folder = picked.path; c.updated_at = nowIso(); scheduleSave(); closeModal(); render();
     };
-    load(cur);
+    mountBrowser(fb, {
+      listUrl: '/api/fs/list',
+      initialPath: initial,
+      bindLabel: 'Bind to',
+      onLoad: (st) => { if (st) picked = st; useBtn.disabled = !st; },
+    });
   });
+}
+
+// First-run setup wizard (#/setup). Browses from the user's HOME so they can find
+// the shared OneDrive folder, then POSTs /api/setup/bind (writes .env + restarts
+// the server task) and polls /api/setup/status until the restarted server reports
+// it's configured. Only reachable on the local Node backend.
+function renderSetup(main) {
+  main.innerHTML = `
+    <section class="setup-wizard">
+      <h1 class="setup-title">Set up Throughline</h1>
+      <p class="setup-lead">Pick your shared OneDrive folder — the one shared with your dyad partner (look under <strong>OneDrive&nbsp;-&nbsp;…</strong>). Throughline reads its files and keeps your shared projects there. It never changes your files.</p>
+      <div class="fb" id="setup-fb"><div class="muted small">Loading…</div></div>
+      <div class="setup-actions">
+        <button class="btn primary" id="setup-use" disabled>Use this folder</button>
+      </div>
+      <div class="setup-msg small" id="setup-msg"></div>
+    </section>`;
+  const fb = main.querySelector('#setup-fb');
+  const useBtn = main.querySelector('#setup-use');
+  const msg = main.querySelector('#setup-msg');
+  let picked = { path: '', absPath: '' };
+  mountBrowser(fb, {
+    listUrl: '/api/setup/browse',
+    initialPath: '',
+    bindLabel: 'Use folder',
+    onLoad: (st) => { if (st) picked = st; useBtn.disabled = !st || !st.absPath; },
+  });
+  useBtn.onclick = async () => {
+    if (!picked.absPath) return;
+    useBtn.disabled = true;
+    msg.textContent = 'Saving and restarting Throughline…';
+    try {
+      const r = await fetch('/api/setup/bind', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ folderAbsPath: picked.absPath }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        msg.textContent = `Couldn't use that folder: ${e.error || r.status}`;
+        useBtn.disabled = false;
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      msg.textContent = (data.warning ? data.warning + ' ' : '') + 'Saving and restarting Throughline…';
+      pollSetupReady(msg);
+    } catch (e) {
+      // The restart can drop the socket; treat as success-in-progress and poll.
+      msg.textContent = 'Saved — waiting for Throughline to restart…';
+      pollSetupReady(msg);
+    }
+  };
+}
+
+// Poll until the restarted server reports configured; connection-refused just
+// means it's mid-restart, not a failure.
+async function pollSetupReady(msg, tries = 0) {
+  if (tries > 30) {
+    msg.textContent = 'Still restarting — please refresh this page in a moment.';
+    return;
+  }
+  try {
+    const r = await fetch('/api/setup/status', { cache: 'no-store' });
+    if (r.ok) {
+      const s = await r.json();
+      if (s.configured) {
+        location.hash = '#/';
+        await loadState();
+        render();
+        return;
+      }
+    }
+  } catch (e) { /* still restarting */ }
+  setTimeout(() => pollSetupReady(msg, tries + 1), 1000);
+}
+
+// On a fresh local install ONEDRIVE_ROOT isn't configured yet — send the user to
+// the wizard. Silent no-op on the cloud Worker (no setup endpoint) or offline.
+async function maybeRedirectToSetup() {
+  if (location.hash.replace(/^#/, '') === '/setup') return;
+  try {
+    const r = await fetch('/api/setup/status', { cache: 'no-store' });
+    if (!r.ok) return;
+    const s = await r.json();
+    if (!s.configured) location.hash = '#/setup';
+  } catch (e) { /* no setup endpoint (cloud) / offline → behave as today */ }
 }
 
 function renderContainer(main, c) {
@@ -3547,5 +3662,6 @@ function commitTriage() {
     meta.textContent = `Dyad workspace · ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
   }
   await loadState();
+  await maybeRedirectToSetup();
   render();
 })();

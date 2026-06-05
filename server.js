@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readState, writeState, dbPath } from './lib/store.js';
 import { listFolder, openFile } from './lib/files.js';
+import { setupStatus, listSetupFolder, bindFolder, restartServerTask } from './lib/setup.js';
 import { atomizeEntry } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
 import { makeLLMCall } from './shared/llm.js';
@@ -204,6 +205,50 @@ async function handleFsOpen(req, res) {
   }
 }
 
+// First-run onboarding (Epic E1.5) — LOCAL ONLY, like the lens. The wizard
+// browses from the user's HOME (not the not-yet-set ONEDRIVE_ROOT) so they can
+// find + pick the shared OneDrive folder; /api/setup/bind writes .env and
+// restarts the server task. The Worker has no filesystem and never serves these.
+async function handleSetupStatus(req, res) {
+  if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  return sendJson(res, 200, await setupStatus());
+}
+
+async function handleSetupBrowse(req, res, url) {
+  if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  const rel = url.searchParams.get('path') || '';
+  try {
+    return sendJson(res, 200, await listSetupFolder(rel));
+  } catch (err) {
+    if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'folder not found' });
+    if (/escapes home|absolute path not allowed|must be a string/.test(err.message)) {
+      return sendJson(res, 400, { error: err.message });
+    }
+    if (err.code === 'ENOTDIR') return sendJson(res, 400, { error: 'not a folder' });
+    return sendJson(res, 500, { error: err.message });
+  }
+}
+
+async function handleSetupBind(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  let body;
+  try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+  const folderAbsPath = typeof body?.folderAbsPath === 'string' ? body.folderAbsPath : '';
+  let result;
+  try {
+    result = await bindFolder(folderAbsPath);
+  } catch (err) {
+    if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'folder not found' });
+    return sendJson(res, 400, { error: err.message });
+  }
+  // Flush the response FIRST — the restart ends our own task (killing this
+  // process), so we must not still be mid-response when it fires.
+  sendJson(res, 200, { ok: true, restarting: true, ...result });
+  setTimeout(() => {
+    try { restartServerTask(); } catch (err) { console.error('restart failed', err); }
+  }, 250);
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -214,6 +259,9 @@ const server = createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/attachments/')) return await serveAttachment(req, res, url.pathname);
     if (url.pathname === '/api/fs/list') return await handleFsList(req, res, url);
     if (url.pathname === '/api/fs/open') return await handleFsOpen(req, res);
+    if (url.pathname === '/api/setup/status') return await handleSetupStatus(req, res);
+    if (url.pathname === '/api/setup/browse') return await handleSetupBrowse(req, res, url);
+    if (url.pathname === '/api/setup/bind') return await handleSetupBind(req, res);
     return await serveStatic(req, res, url.pathname);
   } catch (err) {
     console.error(err);
