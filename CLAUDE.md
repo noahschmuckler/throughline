@@ -65,12 +65,21 @@ deferred V1+ backlog lives in `BUILDPATH.md` §H.)
   3. **Triage files into reference files** too (not just projects).
   4. **Atom retype** in the entry drawer (fix the AI's mis-classification).
   5. **Removed the deprecated copy-attachments UI** (folder lens replaces it).
+- `onboarding-installer` (origin, **current as of 2026-06-05**) — branched off
+  `folder-lens-mvp`. The **distribution + first-run onboarding** epic (E1.5). Adds,
+  on top of folder-lens: the self-downloading PowerShell installer, the in-app
+  **setup wizard** (`lib/setup.js` + `/api/setup/*`), and the **meridian-briefing
+  launcher tile + static install page** (in the *sibling* repo, branch
+  `throughline-launcher`, merged to its `main`). **Shipped + live: Noah AND
+  Natalia are both onboarded on real orange boxes from this.** See the new
+  "Onboarding & distribution" section below.
 
 Each branch stacks on the previous. Verify what a branch actually adds
 with `git log <parent>..HEAD --oneline` before reading the diff.
-**Guardrail change:** the old "never push" rule is lifted for
-`folder-lens-mvp` — the user asked to push it. Still confirm before pushing
-anything else.
+**Guardrail change:** the old "never push" rule is lifted for `folder-lens-mvp`
+**and** `onboarding-installer` (throughline) + `throughline-launcher`/`main`
+(meridian-briefing) — the user asked to push/deploy these to onboard Natalia.
+Still confirm before pushing anything else.
 
 ## Running it / seeing it right now (for a cold start)
 
@@ -185,7 +194,68 @@ filesystem is the source of truth). Full design in `VISION.md` (slice S0+S1+S3).
   stays fast) above the legacy copy-attachments block, and a click on a file
   calls `/api/fs/open` (`openBoundFile`) instead of downloading.
 - **Tests:** `test/files.test.mjs` (`npm test` / `node --test test/`) — covers
-  the traversal refusals and the per-platform open command.
+  the traversal refusals and the per-platform open command. **Note (2026-06-05):**
+  `listUnder` now **stat-resolves reparse-point dirents** so OneDrive cloud-sync
+  roots (`OneDrive - UHG`) and shared-folder shortcuts (`Peden, …'s files`) — which
+  Windows reports as symlinks, not dirs — are browsable; a stat failure (ACL-denied
+  legacy junction) drops the entry. Without this the lens/setup browser silently
+  hides OneDrive folders.
+
+## Onboarding & distribution — Epic E1.5 (`onboarding-installer` branch)
+
+How a non-technical user (Natalia, Amanda, …) stands up a **local** Throughline
+without GitHub or editing `.env`. **Shipped + live on real orange boxes (2026-06-05).**
+The model: **meridian-briefing is a pure file-distributor + launcher; nothing
+Throughline runs on the CR DEV server** (it can't run Node). Three machines:
+- **Linux dev box** — builds + publishes (`deploy/publish-throughline.sh`: runs
+  `bundle.sh`, drops `throughline-latest.zip` + `install-throughline.ps1.txt` +
+  `throughline-release.json` {version,sha,sha256,date} into the **sibling**
+  `~/GitHub_Repos/meridian-briefing/public/throughline/`; does NOT push — prints the
+  git commands). Deliberate publish; CR DEV picks it up via its normal `git pull`.
+- **CR DEV server** (`cdseastdev.ms.ds.uhc.com:8080`, **plain HTTP**, no Node) —
+  serves the static files. meridian-briefing's contribution is **zero-lockstep**:
+  an **admin-only** `THROUGHLINE_TILE` in `public/briefing.js` AdminHome →
+  `/throughline/index.html` (a self-contained static page: download button + the
+  copy-paste PowerShell one-liner). No `server.js`/`server.ps1` route changes.
+  (The bare dir `/throughline/` falls to the SPA, so the tile links the explicit
+  `index.html`.) Merged to meridian-briefing **`main`**.
+- **Orange box** (Windows, has Node) — runs the local Throughline + setup wizard.
+
+**Installer (`deploy/install-throughline.ps1`, shipped as `.ps1.txt` to dodge the
+browser/OneDrive download block):** a **self-downloading bootstrapper** — the user
+downloads only the one `.ps1.txt`, renames + `Unblock-File` + runs it; it
+`Invoke-WebRequest`s the zip from `$BundleBaseUrl` (default
+`http://cdseastdev.ms.ds.uhc.com:8080/throughline`, override `$env:THROUGHLINE_BUNDLE_URL`;
+`-Insecure`/`-NoBrowser` switches), verifies **sha256** against the manifest,
+expands, reuses the existing stop-task→preserve-`.env`→register `ThroughlineServer`
+→start logic, then opens the browser at **`/#/setup`** (hash route — bare `/setup`
+404s). Update-in-place preserves `.env`.
+
+**Setup wizard (`lib/setup.js` + `/api/setup/{status,browse,dbinfo,bind}`, Node-only):**
+the chicken-and-egg is that `ONEDRIVE_ROOT` isn't set yet and the lens browse is
+locked to it — so setup browses from **`os.homedir()`** via a *separate* home-rooted
+gate (`resolveWithinHome`, reusing `resolveWithin`/`listUnder` from `lib/files.js`;
+**do not widen the lens `/api/fs/list`**). Front-end (`public/app.js`): a **two-step**
+`#/setup` wizard (shared `mountBrowser` helper; the boot path auto-redirects to it
+when unconfigured, and the wizard **bounces to the dashboard when already configured**):
+  1. pick the **shared OneDrive folder** (→ `ONEDRIVE_ROOT`, the lens root);
+  2. pick **where `state.json` lives** — `/api/setup/dbinfo` lists candidates
+     (`Throughline/state.json` *recommended* vs root `state.json`) with
+     existing-workspace **counts**, so a second dyad member just confirms the team's
+     workspace. Default = the `Throughline/` subfolder (keeps the shared root tidy).
+- **`bindFolder(rootAbs, dbAbs)`** writes `.env` AND **applies to `process.env` live**
+  — `rootDir()`/`dbPath()` read env at call time, so **no task restart is needed**
+  (the old `schtasks /End`+`/Run` self-killed its own process tree on Windows → the
+  "still restarting" hang; that path is gone). Validates `rootAbs` under home and
+  `dbAbs` inside `rootAbs`; `mkdir`s the parent. `.env` is still persisted for next boot.
+- **Tests:** `test/setup.test.mjs` (containment refusals, `.env`-preservation,
+  default-DB, dbinfo counts) + the reparse test in `test/files.test.mjs`.
+
+**Current live config (Noah + Natalia):** `ONEDRIVE_ROOT` = the shared-folder root
+(Natalia-owned `…\OneDrive - UHG\Peden, Natalia L's files - IMFM Provider Corner`,
+a shortcut on Noah's box); `THROUGHLINE_DB` = `…\Throughline\state.json` (the
+~125 KB real workspace). **The next direction — multi-user "circles" — is paused;
+the full design lives in `VISION.md` §M3.**
 
 ## AI ingestion seam (stub today)
 

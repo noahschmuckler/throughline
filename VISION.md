@@ -243,11 +243,70 @@ being optional. Stages:
   git-branch/merge intuition **without a server.**
 - **M2 · Conflict resolution UI** — surface the few real conflicts; let the user
   choose. Also reconcile/sweep OneDrive `*conflicted copy*` files.
-- **M3 · Workspaces** — point Throughline at multiple shared folders; switch
-  between them; per-workspace bindings.
-- **M4 · User onboarding** — a friendly setup for a new user (clone/sync +
-  register-task + share-folder), folding in loop-de-loop's Graph-access-request
-  wizard (T6).
+- **M3 · Workspaces / "circles"** — point Throughline at multiple shared folders;
+  switch/filter between them; federate them into one dashboard. **Full design
+  below.**
+- **M4 · User onboarding** — **DONE for the single-workspace case (Epic E1.5, see
+  CLAUDE.md "Onboarding & distribution"): meridian-briefing distributor tile +
+  self-downloading installer + two-step setup wizard; Noah + Natalia live.** What
+  remains here is the *multi-workspace* onboarding (a new user joining several
+  circles) and folding in loop-de-loop's Graph-access-request wizard (T6).
+
+### Circles — the M3 design (worked out 2026-06-05, then PAUSED)
+
+The load-bearing fact: **a OneDrive shared folder is the atomic unit of access —
+sharing cascades down with no reliable sub-restriction** (enterprise ODB is
+SharePoint-backed so break-inheritance is *technically* possible, but it's fragile
+and must NOT be the basis of confidentiality). So:
+
+- **circle = audience = one top-level shared folder = one workspace = one
+  `state.json`.** A user belongs to several. Throughline **federates** the
+  workspaces it can see into one view. A project lives in exactly one circle, so
+  **its audience IS that folder's share** — Throughline writes *zero* access-control
+  code; OneDrive's sharing is the permission system. The mesh case (Natalia+Amanda
+  without Noah) just never syncs to Noah's box.
+- **No nesting** — because sharing cascades down, circles must be **siblings** at
+  the OneDrive top level, never nested. A user's drive becomes a flat row of
+  circle-folders (some owned, some "shared-with-me" shortcuts = reparse points,
+  which the lens/setup browser now resolves).
+- **Audience = folder placement, NOT permission edits.** To give work to a
+  different group you **create a sibling project in that circle** (the common case —
+  work usually diverges per audience anyway), rather than re-sharing a folder. This
+  sidesteps break-inheritance entirely.
+- **The Epic E1.5 wizard already built the primitive**: it separated the lens root
+  (`ONEDRIVE_ROOT`) from the data file (`THROUGHLINE_DB` = `<root>/Throughline/state.json`)
+  and detects an existing workspace. "A shared folder containing `Throughline/state.json`"
+  *is* the workspace unit. **What's left is the federation layer.**
+- **Federation (the actual M3 build):** discover workspaces by scanning the user's
+  OneDrive top level (incl. shared-folder shortcuts) for `*/Throughline/state.json`;
+  load each, **tag every container with its origin workspace**, route writes back to
+  the right file; a **header dropdown** (`All` + one per circle) filters the
+  dashboard and sets which circle new projects land in.
+- **"Who can see" label:** Throughline can't read the real ACL (no Graph), so each
+  `state.json` carries a **self-declared** top-level `workspace: { name, members[] }`
+  (defaulted in `normalizeState`). The dropdown shows it ("Shared with: Noah,
+  Amanda"). It's a *reminder*, not enforcement — the folder share is the real
+  boundary; never let the label masquerade as security.
+- **Personal workspace** (a folder shared with no one) holds the user's
+  **cross-circle programs** + private layout/pins. A program there can reference
+  children across circles; only that user's app resolves them all.
+- **Cross-circle MOVE** is a rare migration, not a daily feature: a project is an
+  id-keyed **subtree** (container → entries → atoms) — cut from the source
+  `state.json`, paste into the target (no broken internal links, no dup; back up
+  first), re-base the root-relative `folder` binding, handle `program_id`. **Files
+  move manually** (the lens is read-only by design); Throughline only re-points the
+  binding. Not MVP.
+
+**Immediate concrete TODO when this resumes:** Noah is onboarding **Amanda** (urgent
+care). Some **UC projects already live inside Natalia's folder** (there was nowhere
+else). Need: (1) make the Noah+Amanda shared folder (likely Noah-owned, shared to
+Amanda) with a `Throughline/` subfolder; (2) a **one-off split script** that lifts
+those UC containers (+ their entries/atoms) out of Natalia's `…\Peden, Natalia L's
+files…\Throughline\state.json` into the new Amanda `state.json` and removes them from
+the source (backup first; clear dangling `program_id`); (3) move any bound files in
+Explorer + re-point bindings; then Amanda installs pointed at the new folder and her
+wizard shows "✓ Existing workspace — N projects." Until federation lands, Noah
+switches circles by repointing `THROUGHLINE_DB` (motivation to prioritize M3).
 
 ## Proposed sprint sequence (reordered by the "get it to Natalia" goal)
 
