@@ -15,13 +15,16 @@ import {
   BUNDLE_ARTIFACT, BUNDLE_SCHEMA,
 } from '../public/ingest.js';
 
-// A small workspace: one project (1 open + 1 closed action), one reference file
-// (1 open action assigned to Amanda), an archived project, the Inbox, and people.
+// A small workspace: one program (owning the project), one project (1 open +
+// 1 closed action), one reference file (1 open action assigned to Amanda), an
+// archived project, the Inbox, and people.
 function fixture() {
   return {
     schema_version: 3,
     containers: [
-      { id: 'c_proj', type: 'project', title: 'Payroll', summary: 'pay stuff', framework: 'kanban', status: 'active' },
+      { id: 'c_prog', type: 'program', title: 'Ops modernization', objective: 'Modernize back-office ops',
+        key_results: [{ id: 'kr1', label: 'Payroll cutover', current: 40, target: 100, unit: '%' }], status: 'active' },
+      { id: 'c_proj', type: 'project', title: 'Payroll', summary: 'pay stuff', framework: 'kanban', program_id: 'c_prog', status: 'active' },
       { id: 'c_ref', type: 'reference_file', title: 'SOPs', goal_or_purpose: 'how-to', status: 'active' },
       { id: 'c_arch', type: 'project', title: 'Old', status: 'archived' },
       { id: 'inbox', type: 'inbox', title: 'Inbox', status: 'active' },
@@ -77,6 +80,26 @@ test('buildStateSummary: excludes inbox/archived, counts open actions, framework
   assert.equal(ref.open_actions, 1);
   assert.ok(!('framework' in ref), 'framework only on projects');
   assert.equal(ref.summary, 'how-to'); // falls back to goal_or_purpose
+});
+
+test('buildStateSummary: program hierarchy — program_id + objective/key_results', () => {
+  const sum = buildStateSummary(fixture());
+
+  // Every container carries program_id; child links to parent, others null.
+  const proj = sum.containers.find(c => c.id === 'c_proj');
+  const ref = sum.containers.find(c => c.id === 'c_ref');
+  assert.equal(proj.program_id, 'c_prog');
+  assert.equal(ref.program_id, null);
+
+  // Program entries add objective + lean key_results (no internal kr ids).
+  const prog = sum.containers.find(c => c.id === 'c_prog');
+  assert.equal(prog.program_id, null);
+  assert.equal(prog.objective, 'Modernize back-office ops');
+  assert.deepEqual(prog.key_results, [
+    { label: 'Payroll cutover', current: 40, target: 100, unit: '%' },
+  ]);
+  assert.ok(!('framework' in prog), 'framework only on projects');
+  assert.ok(!('objective' in proj) && !('key_results' in proj), 'OKR fields only on programs');
 });
 
 test('buildStateSummary: recent_actions exclude closed, newest first, capped', () => {

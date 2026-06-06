@@ -9,10 +9,28 @@
   "state_summary": {
     "containers": [
       {
+        "id": "c_net",
+        "type": "program",
+        "title": "Provider network reliability",
+        "summary": "Every provider question answerable in one place",
+        "program_id": null,
+        "open_actions": 0,
+        "objective": "Every provider question answerable in one place",
+        "key_results": [
+          {
+            "label": "Roster questions self-served",
+            "current": 20,
+            "target": 90,
+            "unit": "%"
+          }
+        ]
+      },
+      {
         "id": "c_cred",
         "type": "reference_file",
         "title": "Credentialing SOPs",
         "summary": "How credentialing renewals work",
+        "program_id": null,
         "open_actions": 1
       },
       {
@@ -20,6 +38,7 @@
         "type": "project",
         "title": "Provider onboarding Q3",
         "summary": "Bring new providers online",
+        "program_id": "c_net",
         "open_actions": 2,
         "framework": "kanban"
       }

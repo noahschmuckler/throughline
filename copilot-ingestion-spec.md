@@ -86,9 +86,16 @@ Copilot's retrieval mechanism.
   "state_summary": {                      // working memory so Copilot places against REAL ids
     "containers": [
       { "id": "c_abc", "type": "reference_file", "title": "Credentialing SOPs",
-        "summary": "...", "open_actions": 2 },
+        "summary": "...", "program_id": null, "open_actions": 2 },
       { "id": "c_def", "type": "project", "framework": "kanban",
-        "title": "Provider onboarding Q3", "summary": "...", "open_actions": 5 }
+        "title": "Provider onboarding Q3", "summary": "...",
+        "program_id": "c_net", "open_actions": 5 },
+      { "id": "c_net", "type": "program", "title": "Provider network reliability",
+        "summary": "...", "program_id": null, "open_actions": 0,
+        "objective": "Every provider question answerable in one place",
+        "key_results": [
+          { "label": "Roster questions self-served", "current": 20, "target": 90, "unit": "%" }
+        ] }
     ],
     "recent_actions": [ { "id": "at_x", "body": "...", "container_id": "c_def", "due_date": "2026-06-15" } ],
     "key_people": [ { "name": "Natalia Peden", "open": 4 } ]
@@ -121,15 +128,12 @@ Copilot's retrieval mechanism.
 summaries), never the full `state.json` — it's already >100 KB. It exists so
 Copilot can say `"target": "c_def"` against a real container instead of guessing.
 
-> **KNOWN v1 GAP — fix next (program hierarchy).** As built, `buildStateSummary`
-> lists programs/projects/reference_files as **flat, equal `containers`** and drops
-> the program→project relationship: each entry omits **`program_id`**, and
-> `type:"program"` entries omit **`objective`/`key_results`**. So Copilot can't tell
-> which projects belong to which program — yet a project's context is usually set by
-> its parent program and sibling projects. **Fix:** add `program_id` to every
-> container entry and `objective`/`key_results` to program entries (flat list +
-> `program_id` is reconstructable; no nesting needed); update the example above and
-> add a test. Scoped in CLAUDE.md as the immediate next task.
+**Program hierarchy stays visible in the flat list** (fixed 2026-06-06): every
+container entry carries **`program_id`** (null = standalone), and `type:"program"`
+entries add **`objective`** + **`key_results`** (label/current/target/unit — internal
+kr ids never leave). Copilot reconstructs program → projects from `program_id`; no
+nesting needed. A project's context is usually set by its parent program and sibling
+projects, so this matters for placement quality.
 
 ---
 

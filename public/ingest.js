@@ -56,9 +56,23 @@ export function buildStateSummary(state, { maxRecentActions = 12, excludeIds = [
         type: c.type,
         title: c.title || '',
         summary: c.summary || c.goal_or_purpose || '',
+        // Hierarchy stays visible in the flat list: program_id links a
+        // project/reference to its parent program (null = standalone), so
+        // Copilot can reconstruct program → projects without nesting.
+        program_id: c.program_id || null,
         open_actions: openActionsForContainer(state, c.id).length,
       };
       if (c.type === 'project') out.framework = c.framework || null;
+      if (c.type === 'program') {
+        out.objective = c.objective || '';
+        // Lean KR view — label + numbers only; internal kr ids never leave.
+        out.key_results = (c.key_results || []).map(kr => ({
+          label: kr.label || '',
+          current: kr.current ?? null,
+          target: kr.target ?? null,
+          unit: kr.unit || '',
+        }));
+      }
       return out;
     });
 

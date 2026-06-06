@@ -294,7 +294,7 @@ bounds-checking — but only needed at v2.
 v3 auto-expansion.**
 
 **STATUS — v1 SHIPPED (read-only consult), pushed on `copilot-ingestion`, tests
-green (41/41), NOT merged.** What v1 added:
+green (42/42), NOT merged.** What v1 added:
 - **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
   imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
   `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
@@ -308,19 +308,16 @@ green (41/41), NOT merged.** What v1 added:
   `state_summary` to avoid dup). `dominantBoundFileRefs` pulls `file_refs` from the
   dominant bound target's lens folder (else `[]`). **No new server endpoint; schema
   stays v3.**
-- **`test/ingest.test.mjs`** (13 tests) + **`copilot-probe/sample-chat-about-this.json`**
+- **`test/ingest.test.mjs`** (14 tests) + **`copilot-probe/sample-chat-about-this.json`**
   (a generated example bundle).
 
-**IMMEDIATE NEXT TASK (user will ask right after a context clear):** the bundle's
-`state_summary` flattens programs/projects/reference_files as equal `containers`
-and **drops the program→project hierarchy** — `buildStateSummary` omits each
-container's **`program_id`** and a program's **`objective`/`key_results`**, so Copilot
-can't see which projects belong to which program (and a project's context is often
-set by its program + sibling projects). **Fix:** in `buildStateSummary`
-(`public/ingest.js`) add `program_id` to every container entry and `objective`+
-`key_results` to `type:"program"` entries; update spec §2 `state_summary` shape; add
-a test. Flat list + `program_id` is reconstructable — no need to nest. Then the user
-re-pulls and re-runs (Option A preview) to verify.
+**Program-hierarchy gap — FIXED (2026-06-06):** `buildStateSummary` now emits
+`program_id` on every container entry (null = standalone) and `objective`+
+`key_results` (label/current/target/unit, no internal kr ids) on `type:"program"`
+entries, so Copilot can reconstruct program→projects from the flat list. Spec §2
+example updated, test added (42/42 green), sample bundle regenerated with a
+program in the scenario. **Awaiting the user's orange re-pull + re-run (Option A
+preview) to verify.**
 
 **Previewing a dev branch on orange (how the user tests):** the running app is the
 installed copy at `%USERPROFILE%\throughline` served by the **`ThroughlineServer`**
