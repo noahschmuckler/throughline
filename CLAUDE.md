@@ -108,29 +108,33 @@ is out. To exercise a click-only surface (triage, import), temporarily
 add a boot-time hook reading a `?…=1` query param, screenshot, then
 remove it (this is how triage + import were verified).
 
-## Deployment model — the important quirk
+## Deployment model — there is no cloud deploy anymore (updated 2026-06-06)
 
-This repo runs as Cloudflare Workers + Assets (not Cloudflare Pages,
-despite older language in README). Two distinct workers exist:
+**There is no Cloudflare Worker attached to `throughline`.** The git
+integration / auto-deploy-on-push-to-`main` described in earlier
+snapshots is gone — **pushing to `main` deploys nothing.** `main` is now
+just the shared branch you pull from (e.g. onto orange); a push has no
+runtime side effects. The **only** live form of the app is the **local
+Node server** (`server.js`) running on the orange device — see the Node
+server section below. That is "production" now.
 
-- **`throughline`** — production. Bound to KV namespace
-  `fcf9208b03f54eaabd6524f5a76c7f03`. Deployed automatically by
-  Cloudflare's git integration on push to `main`.
-- **`throughline-preview`** — preview. Bound to KV namespace
-  `db3df52a08194d30a50c55bbdd6343bf`. URL:
-  `https://throughline-preview.noah-schmuckler.workers.dev`. Deployed
-  **manually** via `npx wrangler deploy --env preview` from a local
-  checkout that has the `[env.preview]` block in wrangler.toml.
+What remains is **local-only Cloudflare tooling**, kept for dev
+convenience, not deployment:
+- `src/index.js` is still a working Worker stub and `npx wrangler dev`
+  still runs it locally on `:8787` against the **preview KV**
+  (`preview_id` on the top-level binding), so local hacking never touches
+  any cloud production state. This is just an alternate way to exercise
+  the same `public/` SPA locally; it ships nowhere.
+- Historical KV namespace ids (no longer wired to any live deploy):
+  prod `fcf9208b03f54eaabd6524f5a76c7f03`, preview
+  `db3df52a08194d30a50c55bbdd6343bf`. The old
+  `throughline-preview.noah-schmuckler.workers.dev` URL and the
+  `[env.preview]` / `wrangler deploy --env preview` flow are dormant.
 
-The Cloudflare dashboard's "non-production deploy command" for Workers
-Builds is NOT configured to `wrangler deploy --env preview`, so pushing
-a non-main branch does NOT redeploy the preview worker on its own.
-Until that is set up (Workers & Pages → throughline → Settings → Builds
-→ Non-production deploy command), every preview deploy is a manual
-terminal step.
-
-`wrangler dev` (local) uses `preview_id` on the top-level KV binding,
-so local hacking writes to the preview namespace, not production.
+Bottom line for an AI session: do **not** reason about Cloudflare
+deploys, preview redeploys, or push-to-main side effects — they don't
+exist. Distribution to orange is the `deploy/` kit + installer (Epic
+E1.5), not Cloudflare.
 
 ## Second backend — Node server (orange device) — added on `system-ui-and-triage`
 
@@ -543,17 +547,16 @@ handled, everything else is static assets).
 
 ## Known gaps / things deferred
 
-- **Per-preview-branch KV isolation**: all preview deployments share
-  the one preview KV. True per-branch isolation needs runtime
-  key-namespacing in `src/index.js` (hostname → key prefix). Not
-  implemented.
-- **Cloudflare dashboard non-prod deploy command**: not set up. While
-  that gap persists, preview redeploys are manual.
-- **README accuracy pass**: a few lines still describe "Cloudflare
-  Pages demo" — the shape is actually Workers + Assets. Cheap fix
-  next time something else in README is touched.
-- **package-lock.json**: not tracked. Cloudflare builds work without
-  it. If the team starts caring about reproducible installs, add it.
+- **README accuracy pass**: README still describes a "Cloudflare Pages
+  demo" / cloud deploy. That's doubly stale now — there is no cloud
+  deploy at all (see Deployment model above); the live form is the local
+  Node server. Cheap fix next time README is touched.
+- **package-lock.json**: not tracked. The Node server has zero runtime
+  deps so it doesn't matter today. If the team starts caring about
+  reproducible installs, add it.
+- *(Removed: the old Cloudflare per-preview-branch KV isolation and
+  non-prod-deploy-command gaps — both moot now that nothing deploys to
+  Cloudflare.)*
 - **Closed-action display only visible in drawer**: the container
   detail's entry stack just shows atom counts on each card, not which
   actions are closed. Possible follow-up if users want a glance-level
