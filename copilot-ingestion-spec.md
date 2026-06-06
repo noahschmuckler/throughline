@@ -336,6 +336,62 @@ Atoms hang off **entries**, so commit can't just write atoms:
 5. **JSON discipline was clean on run 1** — encouraging, but unproven across runs;
    keep the 5.4 repair path. (Consistency probe = run the same prompt 3×.)
 
+## 7b. Probe 2 (2026-06-06) — a REAL decision set, Mode A, full workspace
+
+Setup: the live program-retool dump (~7.6 KB) ran the real loop for the first
+time — gpt-mini draft (28 atoms, 5 actions) → bundle (38-container
+`state_summary` incl. the new `program_id` hierarchy) → high-utility prose
+consult → a follow-up prompt embedding the §3 shape → **Copilot returned a
+complete, valid §3 decision set on the first try.** Raw artifacts: local-only at
+`data/probe2/` (sensitive — scrubbed from git history after review; do NOT
+recommit).
+
+**What worked (de-risks the gate):**
+- Single valid JSON object keyed by id; all 28 `a*` ids verdicted, no id
+  invented, no id skipped. 5 `n*` creates + 1 `p*` container create.
+- **Real container ids used correctly throughout** — every `target` was a
+  verbatim `state_summary` id or the new `p*`. Zero fabricated containers.
+- Full verb vocabulary exercised (accept/edit/drop/recategorize/create/
+  merge_into); `merge_into` targets were surviving atom ids, no cycles.
+- It caught the draft's fabricated action and `drop`ped it with the right note.
+- `note` + `confidence` on every verdict.
+
+**Gate requirements discovered (the guardrail list):**
+1. **Verbs blur — make the gate field-driven, not verb-strict.** `recategorize`
+   verdicts also carried new `body` text (spec said that's `edit`'s job). Apply
+   whatever valid fields are present; treat the verb as intent, not contract.
+2. **Id allocation is assumed, not negotiated** — with no `p*` in proposed{},
+   Copilot minted `p2` (not `p1`). Gate: accept any *unused* `p*`/`n*` key as a
+   create; never assume sequence.
+3. **Atoms targeted at a PROGRAM container** — several verdicts filed atoms onto
+   the program itself. Legal in the data model (entries key off any container
+   id) but the program detail page renders the OKR dashboard, not entries →
+   those atoms would be near-invisible. Gate: warn + offer remap (child project
+   or keep), or the program page grows an entries surface. DECIDE BEFORE v2.
+4. **`assigned_to: "narrator"`** — first-person commitments got a placeholder
+   owner. Gate: alias-resolve narrator/me/I → the instance user (couples to
+   multi-user M0 identity); also `_instructions` should state who the user is.
+   (It did correctly pull other owners' full names out of the raw dump.)
+5. **No `source_ref`, no `due_date`** — consistent with probe 1's "ignores fine
+   fields" finding, now confirmed in Mode A (no quoted raw_dump grounding
+   either). The 5.4 normalize pass stays load-bearing.
+6. **Empty-string noise on drop/merge** (`body:""`, `kind`, nulls) — harmless;
+   gate ignores extra/empty fields.
+7. **No `_meta` echo** (version_hash/session_id) — the §3 optional echo won't
+   come back unless the requesting prompt explicitly demands it. v2's
+   decision-set request prompt must ask for it if staleness checking matters.
+
+**Bundle gap found (v1.x fix):** the draft's per-cluster `suggestedId` never
+reaches proposed{} — `chatAboutThis` snapshots the *assigned* target only, so an
+untriaged draft exports every atom as `target:null` (this run: all 28) and
+Copilot re-derives placement from scratch. It placed well anyway, but the
+draft's signal is being thrown away: add `suggested_target` to proposed atoms.
+
+**Workflow lesson:** the two-step flow (consult prose first, *then* request the
+decision set) worked and is worth keeping — folding the §3 format into the
+initial `_instructions` risks Copilot skipping the conversation and jumping to
+output. v2 ships the decision-set request as a second copy-paste prompt.
+
 ---
 
 ## 8. Phasing
