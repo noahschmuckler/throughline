@@ -294,7 +294,7 @@ bounds-checking — but only needed at v2.
 v3 auto-expansion.**
 
 **STATUS — v1 SHIPPED (read-only consult), pushed on `copilot-ingestion`, tests
-green (42/42), NOT merged.** What v1 added:
+green (43/43), NOT merged.** What v1 added:
 - **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
   imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
   `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
@@ -308,16 +308,27 @@ green (42/42), NOT merged.** What v1 added:
   `state_summary` to avoid dup). `dominantBoundFileRefs` pulls `file_refs` from the
   dominant bound target's lens folder (else `[]`). **No new server endpoint; schema
   stays v3.**
-- **`test/ingest.test.mjs`** (14 tests) + **`copilot-probe/sample-chat-about-this.json`**
+- **`test/ingest.test.mjs`** (15 tests) + **`copilot-probe/sample-chat-about-this.json`**
   (a generated example bundle).
 
 **Program-hierarchy gap — FIXED (2026-06-06):** `buildStateSummary` now emits
 `program_id` on every container entry (null = standalone) and `objective`+
 `key_results` (label/current/target/unit, no internal kr ids) on `type:"program"`
 entries, so Copilot can reconstruct program→projects from the flat list. Spec §2
-example updated, test added (42/42 green), sample bundle regenerated with a
-program in the scenario. **Awaiting the user's orange re-pull + re-run (Option A
-preview) to verify.**
+example updated, test added, sample bundle regenerated with a program in the
+scenario.
+
+**Self-describing bundle — ADDED (2026-06-06), from the first live consult:** the
+user attached a real bundle and asked Copilot "does this look right" → Copilot
+reviewed the JSON *format* (verbose structural praise) instead of consulting on
+the breakdown. Fix (two layers, both in `ingest.js`): every bundle now embeds
+**`_instructions`** (`BUNDLE_INSTRUCTIONS` — role + "do NOT review formatting" +
+the four consult tasks), and `chatAboutThis()` copies **`OPENING_PROMPT`** to the
+clipboard (also shown in the alert; clipboard can fail on http) so the chat opens
+pointed at `_instructions`. `_instructions` is NOT in `version_hash` (boilerplate,
+not draft). Spec §2 records the lesson. **Awaiting the user's orange re-pull +
+re-run (Option A preview) to verify both fixes; note v1 is front-end-only so
+copying `public\` over the install also works.**
 
 **Previewing a dev branch on orange (how the user tests):** the running app is the
 installed copy at `%USERPROFILE%\throughline` served by the **`ThroughlineServer`**

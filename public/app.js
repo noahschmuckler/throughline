@@ -6,7 +6,7 @@
 
 import {
   buildStateSummary, buildProposed, buildNeedsClarification,
-  assembleBundle, openActionsForContainer,
+  assembleBundle, openActionsForContainer, OPENING_PROMPT,
 } from './ingest.js';
 
 const STATE_URL = '/api/state';
@@ -3749,10 +3749,18 @@ async function chatAboutThis() {
   });
 
   downloadJson(bundle, `chat-about-this-${bundle.session_id}.json`);
+
+  // Hand the user the opening ask too — the first live consult showed that a
+  // bare "does this look right?" makes Copilot critique the JSON format instead
+  // of the breakdown. The prompt points Copilot at the bundle's _instructions.
+  let copied = false;
+  try { await navigator.clipboard.writeText(OPENING_PROMPT); copied = true; } catch { /* http / no permission */ }
   alert(
     'Exported the chat-about-this bundle to your Downloads.\n\n' +
-    'Attach it to a Copilot chat — plus any source files it references — and ask ' +
-    '"does this look about right?".\n\nRead-only: nothing was filed.'
+    'Attach it to a Copilot chat (plus any source files it references) and paste this opening prompt' +
+    (copied ? ' — it\'s on your clipboard:' : ':') + '\n\n' +
+    `"${OPENING_PROMPT}"\n\n` +
+    'Read-only: nothing was filed.'
   );
 }
 

@@ -12,7 +12,7 @@ import {
   buildStateSummary, buildProposed, buildNeedsClarification,
   assembleBundle, versionHash, stableStringify, sessionIdFrom,
   openActionsForContainer, keyPeopleOpen,
-  BUNDLE_ARTIFACT, BUNDLE_SCHEMA,
+  BUNDLE_ARTIFACT, BUNDLE_SCHEMA, BUNDLE_INSTRUCTIONS, OPENING_PROMPT,
 } from '../public/ingest.js';
 
 // A small workspace: one program (owning the project), one project (1 open +
@@ -207,7 +207,25 @@ test('assembleBundle: §2 envelope, version_hash over proposed, derived session_
   assert.doesNotThrow(() => JSON.parse(JSON.stringify(bundle)));
   // top-level keys exactly match the spec §2 shape
   assert.deepEqual(Object.keys(bundle).sort(), [
-    '_artifact', '_schema', 'created_at', 'file_refs', 'needs_clarification',
-    'proposed', 'raw_dump', 'session_id', 'state_summary', 'version_hash',
+    '_artifact', '_instructions', '_schema', 'created_at', 'file_refs',
+    'needs_clarification', 'proposed', 'raw_dump', 'session_id',
+    'state_summary', 'version_hash',
   ]);
+});
+
+test('bundle is self-describing: _instructions brief + opening prompt', () => {
+  const bundle = assembleBundle({ proposed: {}, state_summary: { containers: [] } });
+  assert.equal(bundle._instructions, BUNDLE_INSTRUCTIONS);
+  // The brief must set the role and forbid format critique (the first live
+  // consult failure mode), and point at the parts Copilot should work with.
+  assert.match(BUNDLE_INSTRUCTIONS, /consulting/i);
+  assert.match(BUNDLE_INSTRUCTIONS, /Do NOT review the JSON formatting/);
+  assert.match(BUNDLE_INSTRUCTIONS, /raw_dump/);
+  assert.match(BUNDLE_INSTRUCTIONS, /needs_clarification/);
+  assert.match(BUNDLE_INSTRUCTIONS, /existing/i);
+  // The opening prompt routes the chat to the embedded brief.
+  assert.match(OPENING_PROMPT, /_instructions/);
+  assert.match(OPENING_PROMPT, /don't critique the JSON format/);
+  // _instructions is NOT part of the version hash (it's boilerplate, not draft).
+  assert.equal(bundle.version_hash, versionHash({}));
 });

@@ -68,10 +68,23 @@ The user attaches this file (and any source docs) to the Copilot chat.
 attach them to the chat.** `file_refs` paths are recorded for the lens, not as
 Copilot's retrieval mechanism.
 
+**Lesson from the first live consult (2026-06-06): the bundle must be
+self-describing.** A bare JSON file + "does this look right?" made Copilot review
+the JSON *format* (verbose structural praise) instead of consulting on the
+breakdown. Two-layer fix: (1) every bundle embeds **`_instructions`** — a task
+brief telling the reading model its role (critique the atom breakdown + filing,
+flag what `raw_dump`'s draft missed, help answer `needs_clarification[]`, prefer
+existing containers; do NOT review formatting) — the probe proved Copilot follows
+instructions inside attached content; (2) "Chat about this" also copies an
+**opening prompt** to the clipboard (`OPENING_PROMPT` in `ingest.js`) so the chat
+starts on the consult, not on JSON critique. v2's decision-set reply will harden
+this same scaffold into a strict output contract.
+
 ```jsonc
 {
   "_artifact": "throughline.chat_about_this",
   "_schema": "ingest-v1",
+  "_instructions": "You are consulting on a draft ingestion for Throughline, ...", // task brief for the reading model (BUNDLE_INSTRUCTIONS)
   "version_hash": "tl_9f3a1c77",          // hash over proposed{} — integrity/staleness check
   "created_at": "2026-06-06T14:00:00Z",
   "session_id": "ing_2026-06-06_1400",    // ties the eventual decision set back to this draft

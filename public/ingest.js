@@ -13,6 +13,31 @@
 export const BUNDLE_ARTIFACT = 'throughline.chat_about_this';
 export const BUNDLE_SCHEMA = 'ingest-v1';
 
+// The task brief embedded in every bundle (`_instructions`). Lesson from the
+// first live consult: a bare JSON file + "does this look right" makes Copilot
+// review the JSON *format* instead of the breakdown. The bundle must be
+// self-describing — the probe proved Copilot follows instructions inside
+// attached content. Keep it consult-shaped (v1): prose advice, no decision set.
+export const BUNDLE_INSTRUCTIONS =
+  'You are consulting on a draft ingestion for Throughline, a project-management tool. ' +
+  'raw_dump is the user\'s unstructured brain dump. proposed{} is a local model\'s draft ' +
+  'breakdown of it into atoms (kinds: observation | decision | action | outcome) filed ' +
+  'against containers (programs / projects / reference files) — state_summary{} lists the ' +
+  'user\'s real workspace containers (program_id links a project to its parent program). ' +
+  'Do NOT review the JSON formatting; it is machine-generated. Instead, help the user ' +
+  'process the dump: (1) critique the breakdown — is each atom correctly typed and filed ' +
+  'against the best container, and should any be split or merged? (2) say what in raw_dump ' +
+  'the draft missed or mis-grouped; (3) help answer the needs_clarification[] questions; ' +
+  '(4) prefer filing into existing state_summary containers — propose a new container only ' +
+  'when nothing fits. Reply in plain prose for a human reader.';
+
+// The one-line ask the user pastes to open the Copilot chat (copied to the
+// clipboard by "Chat about this"). Points at _instructions so the chat starts
+// on the consult, not on JSON critique.
+export const OPENING_PROMPT =
+  'I\'ve attached a Throughline ingestion bundle (JSON). Follow its _instructions field: ' +
+  'help me break down and file the raw_dump — don\'t critique the JSON format.';
+
 // Open action atoms in a container: action atoms with no closing outcome.
 // This is the single source for the open-action rule — app.js's openActionsOf()
 // delegates here so the browser UI and the bundle never drift.
@@ -189,6 +214,7 @@ export function assembleBundle({
   return {
     _artifact: BUNDLE_ARTIFACT,
     _schema: BUNDLE_SCHEMA,
+    _instructions: BUNDLE_INSTRUCTIONS,
     version_hash: versionHash(proposed || {}),
     created_at: now,
     session_id: sessionId || sessionIdFrom(now),
