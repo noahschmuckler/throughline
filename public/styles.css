@@ -1439,6 +1439,7 @@ input[type="color"] { height: 34px; padding: 2px; cursor: pointer; }
 .t-commit .btn { width: 100%; }
 .t-commit .btn.ready { background: var(--u-tone); border-color: var(--u-tone); color: #fff; }
 .t-commit-hint { font-size: 0.66rem; color: var(--mute); text-align: center; margin-top: 5px; }
+.t-commit .t-chat-btn { margin-top: 12px; }
 
 .t-cluster { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); margin-bottom: 8px; overflow: hidden; }
 .t-cluster.assigned { border-width: 1.5px; }

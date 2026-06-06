@@ -4,6 +4,11 @@
 // Ports to a Node + JSON-file backend by swapping the API URL only.
 // ------------------------------------------------------------------
 
+import {
+  buildStateSummary, buildProposed, buildNeedsClarification,
+  assembleBundle, openActionsForContainer,
+} from './ingest.js';
+
 const STATE_URL = '/api/state';
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -265,13 +270,10 @@ function atomsOfContainer(cid) {
   return state.atoms.filter(a => ids.has(a.entry_id));
 }
 
+// Open actions in a container = action atoms with no closing outcome.
+// Delegates to shared/ingest so the UI and the export bundle use one rule.
 function openActionsOf(cid) {
-  const atoms = atomsOfContainer(cid);
-  const actions = atoms.filter(a => a.kind === 'action');
-  const closed = new Set(
-    atoms.filter(a => a.kind === 'outcome' && a.parent_atom_id).map(a => a.parent_atom_id)
-  );
-  return actions.filter(a => !closed.has(a.id));
+  return openActionsForContainer(state, cid);
 }
 
 // First outcome atom (if any) that closes this action.
@@ -3414,6 +3416,7 @@ async function openTriageModal(entryId) {
     })),
     expanded: {},
     newForm: {},
+    createdIds: [], // containers created during THIS triage (→ proposed{} in the export bundle)
   };
   renderTriage();
 }
@@ -3549,6 +3552,8 @@ function renderTriage() {
         <div class="t-commit">
           <button class="btn primary ${done ? 'ready' : ''}" data-act="t-commit">${done ? '✓ Commit entry' : 'Commit entry →'}</button>
           ${total - assigned ? `<div class="t-commit-hint">${total - assigned} unassigned → stay on this entry</div>` : ''}
+          <button class="btn t-chat-btn" data-act="t-chat">💬 Chat about this</button>
+          <div class="t-commit-hint">Export for Copilot — read-only, files nothing.</div>
         </div>
       </div>
     </div>`;
@@ -3560,6 +3565,7 @@ function wireTriage() {
   const panel = document.getElementById('triage');
   panel.querySelector('.triage-close')?.addEventListener('click', closeTriage);
   panel.querySelector('[data-act="t-commit"]')?.addEventListener('click', commitTriage);
+  panel.querySelector('[data-act="t-chat"]')?.addEventListener('click', chatAboutThis);
 
   panel.querySelectorAll('[data-ttoggle]').forEach(el => {
     el.addEventListener('click', (ev) => {
@@ -3632,6 +3638,7 @@ function triageCreateContainer(clusterId, title) {
     tags: [], status: 'active', created_at: nowIso(), updated_at: nowIso(),
   };
   state.containers.push(c);
+  if (triage && !triage.createdIds.includes(id)) triage.createdIds.push(id);
   scheduleSave();
   delete triage.newForm[clusterId];
   assignTriageCluster(clusterId, id);
@@ -3689,6 +3696,93 @@ function commitTriage() {
   closeDrawer(true);
   location.hash = `#/c/${encodeURIComponent(dominant)}`;
   render();
+}
+
+// ---------- Chat about this (Copilot-assisted ingestion · v1) -------
+// Export the current triage draft as a `chat_about_this` bundle the user
+// attaches to a Copilot chat (plus any source docs) for a read-only consult.
+// Writes nothing to state and adds no server endpoint — same no-upload spirit
+// as file import. Spec: copilot-ingestion-spec.md §2 / §8 (v1).
+
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function chatAboutThis() {
+  if (!triage) return;
+  const entry = state.entries.find(e => e.id === triage.entryId);
+  if (!entry) return;
+
+  // Snapshot the live triage state into a DOM-free draft.
+  const draftAtoms = [];
+  for (const c of triage.clusters) {
+    for (const a of c.atoms) {
+      const t = triageTarget(c, a.key);
+      const target = !t ? null : (t === '__inbox__' ? 'inbox' : t);
+      draftAtoms.push({ type: a.type, body: a.body, owner: a.owner, due: a.due, target });
+    }
+  }
+  const newContainers = (triage.createdIds || [])
+    .map(id => getContainer(id))
+    .filter(Boolean)
+    .map(c => ({
+      id: c.id, type: c.type, title: c.title,
+      goal_or_purpose: c.goal_or_purpose || '', framework: c.framework || null, folder: c.folder || null,
+    }));
+  const draft = { atoms: draftAtoms, newContainers };
+
+  const bundle = assembleBundle({
+    raw_dump: entry.notes || '',
+    file_refs: await dominantBoundFileRefs(draftAtoms),
+    state_summary: buildStateSummary(state, { excludeIds: triage.createdIds || [] }),
+    proposed: buildProposed(draft),
+    needs_clarification: buildNeedsClarification(draft),
+    now: nowIso(),
+  });
+
+  downloadJson(bundle, `chat-about-this-${bundle.session_id}.json`);
+  alert(
+    'Exported the chat-about-this bundle to your Downloads.\n\n' +
+    'Attach it to a Copilot chat — plus any source files it references — and ask ' +
+    '"does this look about right?".\n\nRead-only: nothing was filed.'
+  );
+}
+
+// file_refs = files in the dominant existing target's bound OneDrive folder, if
+// any. Dominant = the real container holding the most atoms. Empty when it is
+// unbound or the lens is unavailable (the Worker 501s /api/fs/*).
+async function dominantBoundFileRefs(draftAtoms) {
+  const counts = new Map();
+  for (const a of draftAtoms) {
+    if (!a.target || a.target === 'inbox') continue;
+    counts.set(a.target, (counts.get(a.target) || 0) + 1);
+  }
+  let dominant = null, best = 0;
+  for (const [t, n] of counts) if (n > best) { best = n; dominant = t; }
+  if (!dominant) return [];
+  const c = getContainer(dominant);
+  if (!c || c.folder == null) return [];
+  try {
+    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(c.folder || '')}`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.files || []).map((f, i) => ({
+      ref_id: 'f' + (i + 1),
+      path: fbJoin(c.folder || '', f.name),
+      kind: (f.ext || '').replace(/^\./, '') || null,
+      note: '',
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // ---------- Boot ---------------------------------------------------
