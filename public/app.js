@@ -3383,8 +3383,11 @@ function triageTotals() {
 
 // Who produced this draft (T8). Three states: the model ran; the model was
 // configured but degraded to the heuristic (the previously-invisible case);
-// no model configured at all.
+// no model configured at all. Decisions mode (v2) names the session instead.
 function triageProvenance() {
+  if (triage.mode === 'decisions') {
+    return `Copilot decision set · ${triage.sessionId || 'unknown session'}${triage.info?.versionStale ? ' · ⚠ answers an older draft' : ''}`;
+  }
   if (triage.source === 'llm') return `draft by ${triage.llm || 'model'}`;
   return triage.llm ? `heuristic draft — ${triage.llm} failed` : 'heuristic draft (no model configured)';
 }
@@ -3470,6 +3473,16 @@ function renderTriage() {
       for (const p of refs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
       opts += `</optgroup>`;
     }
+    // Decisions mode (v2): Copilot's proposed new containers as commit-time
+    // placeholders — selectable now, created only when the user commits.
+    if (triage.mode === 'decisions' && (triage.pendingCreates || []).length) {
+      opts += `<optgroup label="New — created on commit">`;
+      for (const pc of triage.pendingCreates) {
+        const v = `__pending__:${pc.pid}`;
+        opts += `<option value="${escHtml(v)}"${cur === v ? ' selected' : ''}>+ ${escHtml(pc.title)} (${pc.kind === 'project' ? 'project' : 'reference'})</option>`;
+      }
+      opts += `</optgroup>`;
+    }
     opts += `<option value="__new__">+ New project…</option>`;
     opts += `<option value="__newref__">+ New reference file…</option>`;
     opts += `<option value="__inbox__"${cur === '__inbox__' ? ' selected' : ''}>Inbox only</option>`;
@@ -3488,6 +3501,7 @@ function renderTriage() {
     let badge = '';
     if (same && targets[0] === '__inbox__') badge = `<span class="t-suggest">→ Inbox</span>`;
     else if (assignedC) badge = `<span class="t-assigned" style="background:${projectColor(assignedC)}">✓ ${escHtml(assignedC.title)}</span>`;
+    else if (same && String(targets[0]).startsWith('__pending__:')) badge = `<span class="t-suggest">＋ new container on commit</span>`;
     else if (allAssigned) badge = `<span class="t-suggest">split across projects</span>`;
     else if (!c.suggestedId) badge = `<span class="t-orphan">⚠ no matching project</span>`;
     // "AI suggests" only when a model actually produced the draft — a heuristic
@@ -3553,10 +3567,25 @@ function renderTriage() {
   const projChips = projs.map(p => chipHtml(p, countTarget(p))).join('');
   const refChips = refs.map(p => [p, countTarget(p)]).filter(([, n]) => n).map(([p, n]) => chipHtml(p, n)).join('');
 
+  // Decisions mode (v2): the gate's warnings + what Copilot dropped or never
+  // addressed — visible, never silently lost (the raw dump keeps everything).
+  let extras = '';
+  if (triage.mode === 'decisions') {
+    const warns = triage.warnings || [];
+    const drops = triage.dropped || [];
+    const unaddr = triage.unaddressed || [];
+    extras =
+      (warns.length ? `<div class="t-warnings">${warns.map(w => `<div class="t-warning">⚠ ${escHtml(w.msg)}</div>`).join('')}</div>` : '') +
+      ((drops.length || unaddr.length) ? `<div class="t-dropped">
+        ${drops.length ? `<details><summary>Dropped by Copilot (${drops.length})</summary>${drops.map(d => `<div class="t-dropped-item">${escHtml(d.body)}${d.note ? ` <span class="muted">— ${escHtml(d.note)}</span>` : ''}</div>`).join('')}</details>` : ''}
+        ${unaddr.length ? `<details><summary>Not addressed by Copilot (${unaddr.length}) — kept only in the entry notes</summary>${unaddr.map(d => `<div class="t-dropped-item">${escHtml(d.body)}</div>`).join('')}</details>` : ''}
+      </div>` : '');
+  }
+
   panel.innerHTML = `
     <div class="t-header">
       <div>
-        <div class="t-eyebrow">Throughline · Entry triage · ${escHtml(triageProvenance())}</div>
+        <div class="t-eyebrow">Throughline · ${triage.mode === 'decisions' ? 'Decision review' : 'Entry triage'} · ${escHtml(triageProvenance())}</div>
         <div class="t-title">${escHtml(entry.title || '(untitled)')}</div>
         <div class="t-sub">${fmtDate(entry.occurred_at)}${(entry.participants || []).length ? ' · ' + escHtml(entry.participants.join(', ')) : ''}</div>
       </div>
@@ -3566,6 +3595,7 @@ function renderTriage() {
         <button class="triage-close" aria-label="Close">×</button>
       </div>
     </div>
+    ${extras}
     <div class="t-body">
       <div class="t-clusters">${clustersHTML || '<div class="empty muted">Nothing to atomize.</div>'}</div>
       <div class="t-sidebar">
@@ -3676,6 +3706,46 @@ function commitTriage() {
   if (!entry) { closeTriage(); return; }
   const source = entry.container_id;
 
+  // v2 decisions mode: materialize the REFERENCED pending creates now — the
+  // only moment Copilot-proposed containers are written (nothing pre-creates;
+  // an unreferenced create is simply never made). Then rewrite the
+  // __pending__:<pid> placeholders to the real ids so the normal grouping
+  // below sees ordinary container targets.
+  if (triage.mode === 'decisions' && (triage.pendingCreates || []).length) {
+    const referenced = new Set();
+    for (const c of triage.clusters) {
+      for (const a of c.atoms) {
+        const t = triageTarget(c, a.key);
+        if (typeof t === 'string' && t.startsWith('__pending__:')) referenced.add(t.slice('__pending__:'.length));
+      }
+    }
+    const realByPid = new Map();
+    for (const pc of triage.pendingCreates) {
+      if (!referenced.has(pc.pid)) continue;
+      const id = uniqueSlug(slugify(pc.title || pc.pid));
+      const c = {
+        id, type: pc.kind, title: pc.title || pc.pid,
+        goal_or_purpose: pc.goal_or_purpose || '', summary: '',
+        tags: [], status: 'active', created_at: nowIso(), updated_at: nowIso(),
+      };
+      if (pc.kind === 'project') {
+        const fw = pc.framework && FRAMEWORKS[pc.framework] ? pc.framework : null;
+        c.framework = fw;
+        c.framework_config = fw ? frameworkConfigFor(fw) : {};
+      }
+      state.containers.push(c);
+      if (!triage.createdIds.includes(id)) triage.createdIds.push(id);
+      realByPid.set(pc.pid, id);
+    }
+    const remap = (t) => (typeof t === 'string' && t.startsWith('__pending__:'))
+      ? (realByPid.get(t.slice('__pending__:'.length)) || null)
+      : t;
+    for (const c of triage.clusters) {
+      c.projectId = remap(c.projectId);
+      for (const k of Object.keys(c.overrides)) c.overrides[k] = remap(c.overrides[k]);
+    }
+  }
+
   const byTarget = new Map();
   for (const c of triage.clusters) {
     for (const a of c.atoms) {
@@ -3715,6 +3785,8 @@ function commitTriage() {
   }
 
   scheduleSave();
+  // A committed decisions-review consumes its pending export.
+  if (triage.mode === 'decisions' && triage.sessionId) deletePendingIngest(triage.sessionId);
   closeTriage();
   closeDrawer(true);
   location.hash = `#/c/${encodeURIComponent(dominant)}`;
@@ -3838,6 +3910,10 @@ async function chatAboutThis() {
 
   downloadJson(bundle, `chat-about-this-${bundle.session_id}.json`);
 
+  // Stash the export so a decision set pasted later (even after a reload)
+  // pairs back with this bundle — accept verdicts have no body of their own.
+  stashPendingIngest(bundle, triage.entryId, newContainers.map(c => c.id));
+
   // Hand the user the opening ask too — the first live consult showed that a
   // bare "does this look right?" makes Copilot critique the JSON format instead
   // of the breakdown. The prompt points Copilot at the bundle's _instructions.
@@ -3848,6 +3924,8 @@ async function chatAboutThis() {
     'Attach it to a Copilot chat (plus any source files it references) and paste this opening prompt' +
     (copied ? ' — it\'s on your clipboard:' : ':') + '\n\n' +
     `"${OPENING_PROMPT}"\n\n` +
+    'Step 2 — when Copilot replies, click "📋 Paste from Copilot" on the dashboard; ' +
+    'the decision-set prompt and the paste box are both in there.\n\n' +
     'Read-only: nothing was filed.'
   );
 }
