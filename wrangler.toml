@@ -8,7 +8,31 @@ compatibility_date = "2026-03-29"
 directory = "./public"
 binding = "ASSETS"
 
-# Single JSON blob lives at KV key "throughline:state".
+# Production KV. `preview_id` is what `wrangler dev` uses locally so
+# our local hacking doesn't trample whatever is in the production KV.
 [[kv_namespaces]]
 binding = "THROUGHLINE"
 id = "fcf9208b03f54eaabd6524f5a76c7f03"
+preview_id = "db3df52a08194d30a50c55bbdd6343bf"
+
+# Preview environment — deployed via `wrangler deploy --env preview`.
+# This is a SEPARATE Worker (named throughline-preview) with its own
+# URL and its own KV namespace. To get non-main branch pushes to land
+# here instead of overwriting production data:
+#
+#   Cloudflare dashboard -> Workers & Pages -> throughline ->
+#     Settings -> Builds -> "Non-production branch deploy command",
+#     set to: npx wrangler deploy --env preview
+#
+# All preview branches share this one preview namespace (per-branch
+# isolation would require runtime key-namespacing in src/index.js).
+[env.preview]
+name = "throughline-preview"
+
+[env.preview.assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[env.preview.kv_namespaces]]
+binding = "THROUGHLINE"
+id = "db3df52a08194d30a50c55bbdd6343bf"

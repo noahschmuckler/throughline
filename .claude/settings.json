@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(google-chrome --headless*)",
+      "Bash(node scripts/seed.mjs *)"
+    ]
+  }
+}

@@ -1,11 +1,18 @@
 {
   "name": "throughline",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Shared dyad accountability tool — projects, dated entries, observations / decisions / actions / outcomes. Cloudflare Pages demo; orange-device production form to follow.",
+  "type": "module",
+  "description": "Shared dyad project tracker — projects, dated entries, observations / decisions / actions / outcomes, with a dashboard, people view, and AI-assisted triage. Runs as a Cloudflare Worker (cloud demo) or a local Node server over a OneDrive-backed JSON file (orange-device production).",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "start": "node server.js",
+    "seed": "node scripts/seed.mjs",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

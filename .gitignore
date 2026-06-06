@@ -6,3 +6,9 @@ node_modules/
 .DS_Store
 *.log
 dist/
+
+# Local Node-server state file (orange uses a OneDrive path instead).
+/data/
+
+# Local-only ticket scratchpad (issues/ideas/bugs from using the app).
+/TICKETS.md
