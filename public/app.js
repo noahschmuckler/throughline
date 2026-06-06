@@ -6,8 +6,9 @@
 
 import {
   buildStateSummary, buildProposed, buildNeedsClarification,
-  assembleBundle, openActionsForContainer, OPENING_PROMPT,
+  assembleBundle, openActionsForContainer, OPENING_PROMPT, DECISION_PROMPT,
 } from './ingest.js';
+import { parseDecisionSet, isBundle, isDecisionSet, resolveDecisions } from './gate.js';
 
 const STATE_URL = '/api/state';
 const SAVE_DEBOUNCE_MS = 600;
@@ -553,6 +554,8 @@ function renderHome(main) {
     () => openAdHocEntryDrawer();
   main.querySelector('[data-act="import-file"]').onclick =
     () => openFileImport();
+  main.querySelector('[data-act="paste-copilot"]').onclick =
+    () => openCopilotImport();
 
   // Drag-and-drop a Markdown/text file anywhere on the dashboard → ingest it.
   const section = main.querySelector('.home');
@@ -1975,28 +1978,37 @@ function titleFromMarkdown(text, filename) {
   return (filename || 'Imported note').replace(/\.[^.]+$/, '');
 }
 
+// Core text intake: any raw text → an Inbox entry, one click from Atomize.
+// Shared by file import, the Paste-from-Copilot freetext path, and the
+// decisions-review stale-entry fallback.
+function importText(text, { title, kind = 'freetext', open = true } = {}) {
+  const inbox = getOrCreateInbox();
+  const e = {
+    id: uid(),
+    container_id: inbox.id,
+    kind,
+    occurred_at: nowIso(),
+    title: title || titleFromMarkdown(text, 'Imported note'),
+    participants: [],
+    tags: [],
+    notes: text,
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  };
+  state.entries.push(e);
+  scheduleSave();
+  // Land in the drawer with notes pre-filled — one click from "Atomize notes".
+  if (open) openEntryDrawer(inbox.id, e.id);
+  return e;
+}
+
 function importTextFile(file) {
   const reader = new FileReader();
   reader.onerror = () => alert('Could not read that file.');
   reader.onload = () => {
     const text = String(reader.result || '');
-    const inbox = getOrCreateInbox();
-    const e = {
-      id: uid(),
-      container_id: inbox.id,
-      kind: 'meeting',          // .loop summaries are meeting recaps
-      occurred_at: nowIso(),
-      title: titleFromMarkdown(text, file.name),
-      participants: [],
-      tags: [],
-      notes: text,
-      created_at: nowIso(),
-      updated_at: nowIso(),
-    };
-    state.entries.push(e);
-    scheduleSave();
-    // Land in the drawer with notes pre-filled — one click from "Atomize notes".
-    openEntryDrawer(inbox.id, e.id);
+    // kind 'meeting': imported files are typically .loop/meeting recaps.
+    importText(text, { title: titleFromMarkdown(text, file.name), kind: 'meeting' });
   };
   reader.readAsText(file);
 }
@@ -3715,6 +3727,56 @@ function commitTriage() {
 // Writes nothing to state and adds no server endpoint — same no-upload spirit
 // as file import. Spec: copilot-ingestion-spec.md §2 / §8 (v1).
 
+// ---------- v2: pending-export stash (localStorage) -----------------
+// Pairs a pasted decision set back with the bundle it answers — `accept`
+// verdicts carry no body (it lives in proposed{}), so the import NEEDS the
+// original bundle. Export and import may be hours apart, across reloads.
+// Per-browser by design (orange runs both steps in one browser); the import
+// modal's paste/pick-the-bundle fallback covers everything else.
+// Stash shape: { bundle, entryId, newContainerIds, savedAt } —
+// entryId = the triaged entry (NOT in the bundle artifact; Copilot doesn't
+// need it), newContainerIds = real ids of containers created during that
+// triage, in order, so the gate can resolve bundle p1..pN (pRealIds).
+
+const STASH_PREFIX = 'throughline:pending_ingest:';
+
+function listPendingIngests() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(STASH_PREFIX)) continue;
+      try {
+        const s = JSON.parse(localStorage.getItem(k));
+        if (s && s.bundle) out.push(s);
+      } catch { /* corrupt stash — ignore */ }
+    }
+  } catch { /* storage unavailable */ }
+  return out;
+}
+
+function stashPendingIngest(bundle, entryId, newContainerIds) {
+  try {
+    localStorage.setItem(
+      STASH_PREFIX + bundle.session_id,
+      JSON.stringify({ bundle, entryId, newContainerIds: newContainerIds || [], savedAt: Date.now() }),
+    );
+    // Keep the last 5; evict oldest.
+    const all = listPendingIngests().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    for (const s of all.slice(5)) localStorage.removeItem(STASH_PREFIX + s.bundle.session_id);
+  } catch { /* storage unavailable/full — the bundle file fallback still works */ }
+}
+
+function findPendingIngest(sessionId) {
+  const all = listPendingIngests();
+  if (sessionId) return all.find(s => s.bundle.session_id === sessionId) || null;
+  return all.length === 1 ? all[0] : null; // no _meta echo: only safe if unambiguous
+}
+
+function deletePendingIngest(sessionId) {
+  try { localStorage.removeItem(STASH_PREFIX + sessionId); } catch { /* ignore */ }
+}
+
 // One-time identity for prompt personalization (no real multi-user identity
 // exists yet — that's E2 M0). Asked once, stored per-browser; an empty answer
 // is remembered too ('' = declined: prompts say "the user" and the gate warns
@@ -3817,6 +3879,180 @@ async function dominantBoundFileRefs(draftAtoms) {
   } catch {
     return [];
   }
+}
+
+// ---------- Paste from Copilot (Copilot-assisted ingestion · v2) -----
+// The inbound channel. Paste field first (probe 2: Copilot prints in-chat
+// far more reliably than it produces downloads), file picker fallback.
+// Three grades of input, one surface (spec §7b):
+//   §3 decision-set JSON → the gate → decisions-mode review overlay
+//   the bundle JSON      → paired in-memory for the next paste
+//   anything else        → freetext → Inbox entry → Atomize (existing path)
+
+let ciPendingBundle = null; // a bundle pasted in this modal session (in-memory pairing)
+
+function openCopilotImport() {
+  ciPendingBundle = null;
+  openModal(`
+    <div class="modal-title">📋 Paste from Copilot</div>
+    <p class="muted small">Paste Copilot's <b>decision set</b> (the JSON it returns to the
+    decision-set prompt). It runs through the verify gate into a review screen — nothing
+    is filed until you commit there. Plain text becomes an Inbox entry ready to atomize.</p>
+    <textarea id="ci-paste" rows="10" style="width:100%" placeholder="Paste here — the decision-set JSON, the bundle JSON, or plain text…"></textarea>
+    <div class="modal-actions">
+      <button class="btn" data-act="ci-prompt">Copy decision-set prompt</button>
+      <button class="btn" data-act="ci-file">…or pick a file</button>
+      <button class="btn primary" data-act="ci-go">Import</button>
+    </div>
+    <div class="muted small" id="ci-hint"></div>
+  `, (modal) => {
+    const hint = (msg) => { const el = modal.querySelector('#ci-hint'); if (el) el.textContent = msg; };
+    modal.querySelector('[data-act="ci-prompt"]').onclick = async () => {
+      const p = DECISION_PROMPT(getUserName());
+      try { await navigator.clipboard.writeText(p); hint('Prompt copied — paste it to Copilot after the consult.'); }
+      catch { hint(p); } // http / no clipboard permission: show it instead
+    };
+    modal.querySelector('[data-act="ci-file"]').onclick = () => {
+      let input = document.getElementById('ci-file-input');
+      if (!input) {
+        input = document.createElement('input');
+        input.type = 'file';
+        input.id = 'ci-file-input';
+        input.accept = '.json,.txt,application/json,text/plain';
+        input.hidden = true;
+        document.body.appendChild(input);
+      }
+      input.value = '';
+      input.onchange = () => {
+        const f = input.files && input.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onerror = () => hint('Could not read that file.');
+        reader.onload = () => handleCopilotIntake(String(reader.result || ''), modal);
+        reader.readAsText(f);
+      };
+      input.click();
+    };
+    modal.querySelector('[data-act="ci-go"]').onclick = () =>
+      handleCopilotIntake(modal.querySelector('#ci-paste')?.value, modal);
+  });
+}
+
+function handleCopilotIntake(text, modal) {
+  const t = String(text || '').trim();
+  if (!t) return;
+  const hint = (msg) => { const el = modal?.querySelector('#ci-hint'); if (el) el.textContent = msg; };
+  const obj = parseDecisionSet(t);
+
+  if (obj && isBundle(obj)) {
+    // The bundle itself — pair it for the decision set that follows (covers
+    // pre-stash exports and cross-device imports).
+    ciPendingBundle = { bundle: obj, entryId: null, newContainerIds: [] };
+    const ta = modal?.querySelector('#ci-paste');
+    if (ta) ta.value = '';
+    hint(`Bundle ${obj.session_id || ''} loaded — now paste Copilot's decision set.`);
+    return;
+  }
+
+  if (obj && isDecisionSet(obj)) {
+    const sid = (obj._meta && obj._meta.session_id) || null;
+    const stash = findPendingIngest(sid) || ciPendingBundle;
+    if (!stash) {
+      hint(sid
+        ? `No pending export matches session ${sid} on this browser — paste or pick the bundle JSON first.`
+        : 'No pending export found on this browser — paste or pick the bundle JSON first.');
+      return;
+    }
+    closeModal();
+    ciPendingBundle = null;
+    openDecisionsReview(stash, obj);
+    return;
+  }
+
+  // Freetext (a prose Copilot reply, an email, anything) → the existing
+  // capture path: Inbox entry, one click from Atomize.
+  closeModal();
+  ciPendingBundle = null;
+  importText(t);
+}
+
+// Gate the decision set against its bundle and open the review overlay —
+// a decisions-mode triage. NOTHING mutates atom/container state here (the
+// stale-entry fallback may add one entry to hold raw_dump); all real writes
+// happen in commitTriage when the user commits.
+function openDecisionsReview(stash, decisions) {
+  const { bundle, entryId, newContainerIds = [] } = stash;
+  const plan = resolveDecisions(bundle, decisions, {
+    state,
+    userName: getUserName(),
+    pRealIds: newContainerIds,
+  });
+
+  // The source entry: the originally-triaged one, else re-created from
+  // raw_dump (so §6's "raw dump preserved first" holds across deletion).
+  let entry = entryId ? state.entries.find(e => e.id === entryId) : null;
+  if (!entry) {
+    entry = importText(bundle.raw_dump || '', {
+      title: `Copilot ingest ${bundle.session_id || ''}`.trim(),
+      open: false,
+    });
+    plan.warnings.push({ code: 'entry_recreated', msg: 'The original entry was not found — re-created it from the bundle\'s raw_dump.', ids: [] });
+  }
+
+  // Group resolved atoms by target → triage-shaped clusters. Null targets
+  // collect in an "Unassigned / needs attention" cluster (always last).
+  const byTarget = new Map();
+  for (const a of plan.atoms) {
+    const key = a.target == null ? '__none__' : a.target;
+    if (!byTarget.has(key)) byTarget.set(key, []);
+    byTarget.get(key).push(a);
+  }
+  const keys = [...byTarget.keys()].sort((x, y) => (x === '__none__') - (y === '__none__'));
+  const clusters = keys.map((t, ci) => {
+    const pendingC = t !== '__none__' ? plan.containerCreates.find(c => c.pid === t) : null;
+    const real = (t !== '__none__' && !pendingC) ? getContainer(t) : null;
+    const name = t === '__none__' ? '⚠ Unassigned / needs attention'
+      : pendingC ? `${pendingC.title} (new ${pendingC.kind === 'project' ? 'project' : 'reference'})`
+        : t === 'inbox' ? 'Inbox'
+          : (real ? real.title : t);
+    const projectId = t === '__none__' ? null
+      : pendingC ? `__pending__:${t}`
+        : t === 'inbox' ? '__inbox__'
+          : t;
+    return {
+      id: 'dc_' + ci,
+      name,
+      suggestedId: null,
+      projectId,
+      overrides: {},
+      atoms: byTarget.get(t).map((a, ai) => ({
+        key: `${ci}_${ai}`, type: a.type, body: a.body,
+        owner: a.owner || undefined, due: a.due || undefined,
+      })),
+    };
+  });
+
+  triage = {
+    entryId: entry.id,
+    source: 'decisions',
+    llm: null,
+    mode: 'decisions',
+    clusters,
+    expanded: {},
+    newForm: {},
+    createdIds: [],
+    // decisions-mode extras (consumed by renderTriage + commitTriage):
+    pendingCreates: plan.containerCreates,
+    warnings: plan.warnings,
+    dropped: plan.dropped,
+    unaddressed: plan.unaddressed,
+    sessionId: bundle.session_id || null,
+    info: plan.info,
+  };
+  const shroud = document.getElementById('triage-shroud');
+  shroud.hidden = false;
+  shroud.onclick = (ev) => { if (ev.target === shroud) closeTriage(); };
+  renderTriage();
 }
 
 // ---------- Boot ---------------------------------------------------
