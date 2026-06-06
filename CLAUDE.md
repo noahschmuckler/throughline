@@ -8,6 +8,41 @@ things.
 
 Snapshot date: 2026-06-01.
 
+## CURRENT SPRINT — Copilot ingestion v2: "decisions back in" (read this first)
+
+**Goal:** close the loop — braindump → atomize draft → "Chat about this" bundle
+→ Copilot consult → decision-set prompt → **📋 Paste from Copilot** → gate →
+decisions-mode review overlay → commit to state.json. Plan file:
+`~/.claude/plans/zesty-forging-fox.md`. Spec: `copilot-ingestion-spec.md`
+(§4 as-built note + §7b probe-2 guardrails + §8 v2 status).
+
+**Locked decisions:** (1) program-targeted atoms remap to the only child
+project else null+warning (programs hold no atoms — the prompt tells Copilot);
+(2) NOTHING auto-applies — all writes happen in commitTriage on user commit
+(pending containers materialize there, only if referenced); (3) paste field is
+the primary inbound channel, freetext degrades to the atomize path.
+
+**Shipped (commits 1–6 on `copilot-ingestion`, 67/67 tests green):**
+`suggested_target` in proposed{}; `DECISION_PROMPT(userName)` + one-time
+identity (`localStorage throughline:user_name`); **`public/gate.js`** (pure
+ESM, mirrors ingest.js; `test/gate.test.mjs` covers every probe-2 guardrail);
+the pending-export stash (`localStorage throughline:pending_ingest:<sid>`,
+keep-5, deleted on commit; pairs a pasted decision set with its bundle —
+accept verdicts have no body); the intake modal + three-grade routing; the
+decisions-mode triage overlay (warnings strip, dropped/unaddressed strips,
+`__pending__:<pid>` commit-time container creation in a commitTriage
+pre-pass). Headless-verified via the temp-hook pattern (hooks removed).
+
+**Deferred (still v2 or later):** gpt-5.4 repair pass, SheetJS source_ref
+bounds-check, `atom.source_ref` persistence, committed-state edits (E3.5),
+components model (E3.1 — see VISION.md Epic E3).
+
+**WHERE WE LEFT OFF:** awaiting the user's orange acceptance run — replay the
+real braindump end-to-end (re-export "Chat about this" so a stash exists →
+consult → decision-set prompt → paste → review → commit). Touches server-side
+nothing new since the T8 slice, but preview still needs the branch-run flow.
+After acceptance: sprint retro → next slice per VISION.md E3 sequence.
+
 ## Vision — `VISION.md` (the next big direction)
 
 `VISION.md` is the living design/architecture doc for where Throughline is
@@ -293,8 +328,8 @@ bounds-checking — but only needed at v2.
 **Phasing (spec §8): v1 read-only consult → v2 decisions-back-in + gate + SheetJS →
 v3 auto-expansion.**
 
-**STATUS — v1 SHIPPED (read-only consult), pushed on `copilot-ingestion`, tests
-green (47/47), NOT merged.** What v1 added:
+**STATUS — v1 SHIPPED + verified live; v2 CORE SHIPPED (see the CURRENT SPRINT
+block at the top of this file), tests green (67/67), NOT merged.** What v1 added:
 - **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
   imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
   `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
@@ -326,8 +361,8 @@ the breakdown. Fix (two layers, both in `ingest.js`): every bundle now embeds
 the four consult tasks), and `chatAboutThis()` copies **`OPENING_PROMPT`** to the
 clipboard (also shown in the alert; clipboard can fail on http) so the chat opens
 pointed at `_instructions`. `_instructions` is NOT in `version_hash` (boilerplate,
-not draft). Spec §2 records the lesson. **Awaiting the user's orange re-pull +
-re-run (Option A preview) to verify both fixes.**
+not draft). Spec §2 records the lesson. **Verified live 2026-06-06** (the
+program-retool consult engaged with the breakdown, not the JSON format).
 
 **Atomize provenance — SHIPPED (2026-06-06, T8):** a 75-atom draft from a real
 8 KB dump was unattributable (model or silent heuristic fallback?). Now:
@@ -340,7 +375,9 @@ mislabeled keyword matches as AI). Tiering confirmed implemented: atomize = tier
 `reason` (cdsapi→gpt-mini), classify = tier `classify` (→gpt-nano); `LLM_MODEL`
 unset means the tier map applies. Tests: `test/atomize.test.mjs`. **NOTE: this
 slice touches `server.js` — orange preview needs the branch-run flow, not just a
-`public\` copy.**
+`public\` copy.** **Verified live 2026-06-06:** the eyebrow exposed that the
+user's preview launch line pointed at the wrong folder (no env → heuristic);
+fixed, cdsapi/gpt-mini confirmed running (~90 s on an 8 KB dump → T12).
 
 **v1 VERIFIED LIVE END-TO-END (2026-06-06):** with cdsapi actually wired (the
 earlier 75-atom mess was the heuristic — the preview launch line had pointed at

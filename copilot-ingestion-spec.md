@@ -209,6 +209,28 @@ Sits between the imported decision set and the triage overlay. **Nothing is
 filed by the gate** — its output is a *flagged* draft the human still curates.
 Order: A → (B if needed) → re-A → C → D → E.
 
+> **AS BUILT (v2, 2026-06-06 — `public/gate.js` + `test/gate.test.mjs`):**
+> stages **A, D-lite, E shipped**; **B (5.4 repair) and C (SheetJS
+> source_ref bounds-check) deferred** to the next slice. Three deliberate
+> divergences from the text below, all per the locked decision "everything
+> lands in review, nothing auto-applies":
+> 1. **§4A.4 unresolved target → `null` (review's "needs attention"
+>    cluster), NOT Inbox** — a silent Inbox default is itself an
+>    auto-decision; the human picks in review instead.
+> 2. **§4D coverage >40% → loud `coverage_low` WARNING, not an abort** —
+>    an auto-abort is also an auto-decision. Unverdicted atoms are excluded
+>    from import but listed ("Not addressed by Copilot"); the raw dump in
+>    the entry notes keeps everything recoverable.
+> 3. **Verbs are intent, not contract** (§7b#1): the gate applies whatever
+>    valid fields a verdict carries regardless of its verb, instead of §4A.3
+>    coercion.
+> Plus two rules the text below predates: **program targets** remap to the
+> program's only child project, else clear to null + warning (programs hold
+> no atoms); **`narrator`/`me`-style owners** alias to the stored user name.
+> Bundle `p*` verdicts (containers created during the original triage =
+> already-committed state) are surfaced and skipped — committed-state edits
+> are E3.5.
+
 ### A. Structural validation (pure code; cheap)
 1. Parse JSON. On parse failure → go to **B** (5.4 repair), retry **once**.
 2. Drop keys that are neither a known draft id (`p*`/`a*`) nor a new `n*`; log each.
@@ -419,6 +441,17 @@ gate; freetext → atomize.
   as the file fallback, `atom.source_ref`, the 5.4 normalize pass, and
   **vendored SheetJS** for §4C source_ref bounds-checking (bundled in the
   installer — no separate install).
+  **STATUS (2026-06-06): CORE SHIPPED on `copilot-ingestion`** — paste-in
+  intake (📋 Paste from Copilot: decision set → gate → decisions-mode review;
+  bundle → in-memory pairing; freetext → Inbox entry), `public/gate.js` (§4
+  as-built note above), the decisions-mode triage overlay with commit-time
+  container materialization, the localStorage pending-export stash
+  (`throughline:pending_ingest:<session_id>`, keep-5; pairing is per-browser —
+  the paste-the-bundle fallback covers everything else), `DECISION_PROMPT`
+  (the second prompt), `suggested_target` in proposed{}, and the one-time
+  user-name identity (`throughline:user_name`). **Still open in v2:** the
+  5.4 normalize/repair pass, SheetJS `source_ref` bounds-check, file-picker
+  polish, `atom.source_ref` persistence on committed atoms.
 - **v3 — auto-expansion.** Only if v2 proves the round-trips are worth automating:
   Copilot requests more detail on a thin item → Throughline extracts → re-export.
   Highest complexity, least-used; deferred on purpose.
