@@ -342,6 +342,17 @@ unset means the tier map applies. Tests: `test/atomize.test.mjs`. **NOTE: this
 slice touches `server.js` — orange preview needs the branch-run flow, not just a
 `public\` copy.**
 
+**v1 VERIFIED LIVE END-TO-END (2026-06-06):** with cdsapi actually wired (the
+earlier 75-atom mess was the heuristic — the preview launch line had pointed at
+the wrong folder, so no env loaded), gpt-mini produced a dramatically better
+draft on the same 8 KB dump (28 atoms, 5 actions, correct project suggested) and
+the Copilot consult on that bundle was high-utility (split/retype/merge/missing-
+atom critiques, a proposed new project, framework advice that independently
+converged on the E3 loop-table). **Lesson: consult quality gates on draft
+quality** — garbage draft in, format-critique out; decent draft in, real PM
+collaboration out. Caveat: the gpt-mini run took ~90 s with a frozen
+"Atomizing notes…" (ticket T12).
+
 **The next big direction is captured in `VISION.md` Epic E3** (modular project
 components + the three-stage LLM collaborator: consult → structure proposals →
 mutation routing). Tickets T7/T9/T10/T11 hang off it; sprint planning happens at
