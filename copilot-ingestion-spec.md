@@ -38,7 +38,7 @@ dump (+docs) ──▶ local extract (mini/5.4) ──▶ DRAFT  ──▶ triag
                                                           reads docs, returns verdicts
                                                                    │
                                                                    ▼
-                                              download → ~/Downloads → import → GATE ───┘
+                                       paste-in (primary) / download → import → GATE ───┘
 ```
 
 ---
@@ -392,6 +392,15 @@ decision set) worked and is worth keeping — folding the §3 format into the
 initial `_instructions` risks Copilot skipping the conversation and jumping to
 output. v2 ships the decision-set request as a second copy-paste prompt.
 
+**Inbound channel lesson:** Copilot printed the decision set **in-chat**, not as
+a downloadable file — it's inconsistent about producing downloads. So v2's
+import surface is a **paste field first, file picker second** (the Downloads
+browser becomes the fallback, not the primary). Bonus: a paste field naturally
+handles the non-JSON case — pasted freetext (a prose Copilot reply, or any raw
+text) routes to the existing cdsapi re-process path (atomize) instead of the
+gate. One intake surface, three grades: §3 JSON → gate; near-JSON → 5.4 repair →
+gate; freetext → atomize.
+
 ---
 
 ## 8. Phasing
@@ -401,9 +410,12 @@ output. v2 ships the decision-set request as a second copy-paste prompt.
   import/gate.** Smallest thing that delivers the missing conversation; zero
   ingestion risk. ("Does this look about right?")
 - **v2 — decisions back in.** Import the decision set, run the full gate (§4),
-  land in triage. The real loop. Adds `atom.source_ref`, the home-scoped Downloads
-  browser, the 5.4 normalize pass, and **vendored SheetJS** for §4C source_ref
-  bounds-checking (bundled in the installer — no separate install).
+  land in triage. The real loop. Adds the **paste-in import field** (primary
+  channel — Copilot prints in-chat more reliably than it makes downloads; pasted
+  freetext degrades to the atomize path) with the home-scoped Downloads browser
+  as the file fallback, `atom.source_ref`, the 5.4 normalize pass, and
+  **vendored SheetJS** for §4C source_ref bounds-checking (bundled in the
+  installer — no separate install).
 - **v3 — auto-expansion.** Only if v2 proves the round-trips are worth automating:
   Copilot requests more detail on a thin item → Throughline extracts → re-export.
   Highest complexity, least-used; deferred on purpose.
