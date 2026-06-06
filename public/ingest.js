@@ -153,7 +153,11 @@ export function buildProposed(draft = {}) {
   });
   const atoms = (draft.atoms || []).map((a, i) => {
     const target = a.target == null ? null : (realToP.get(a.target) || a.target);
-    const out = { id: 'a' + (i + 1), kind: a.type, body: a.body || '', target, source_ref: null, confidence: null };
+    // suggested_target = the local model's (unconfirmed) pick, kept distinct from
+    // target (the user's assignment) so Copilot sees the draft's signal even on
+    // an untriaged export — probe 2 lost it entirely (all targets null).
+    const suggested = a.suggested == null ? null : (realToP.get(a.suggested) || a.suggested);
+    const out = { id: 'a' + (i + 1), kind: a.type, body: a.body || '', target, suggested_target: suggested, source_ref: null, confidence: null };
     if (a.type === 'action') { out.assigned_to = a.owner || null; out.due_date = a.due || null; }
     return out;
   });

@@ -123,11 +123,14 @@ this same scaffold into a strict output contract.
     ],
     "atoms": [
       { "id": "a1", "kind": "action", "body": "Check which providers' credentialing is expiring.",
-        "target": "p1", "assigned_to": null, "due_date": null,
+        "target": "p1", "suggested_target": "p1", "assigned_to": null, "due_date": null,
         "source_ref": null, "confidence": 0.5 },
       { "id": "a2", "kind": "observation", "body": "People keep asking who accepts new Medicaid patients.",
-        "target": "p1", "source_ref": null, "confidence": 0.7 }
+        "target": null, "suggested_target": "p1", "source_ref": null, "confidence": 0.7 }
     ]
+    // target = the user's confirmed assignment (null until triaged);
+    // suggested_target = the local draft model's unconfirmed pick — kept distinct
+    // so an untriaged export still carries the draft's placement signal (§7b).
   },
 
   "needs_clarification": [

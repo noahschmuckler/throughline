@@ -3738,7 +3738,9 @@ async function chatAboutThis() {
     for (const a of c.atoms) {
       const t = triageTarget(c, a.key);
       const target = !t ? null : (t === '__inbox__' ? 'inbox' : t);
-      draftAtoms.push({ type: a.type, body: a.body, owner: a.owner, due: a.due, target });
+      // suggested = the local model's pick for this cluster (probe 2 showed an
+      // untriaged draft exported all targets null, discarding this signal).
+      draftAtoms.push({ type: a.type, body: a.body, owner: a.owner, due: a.due, target, suggested: c.suggestedId || null });
     }
   }
   const newContainers = (triage.createdIds || [])

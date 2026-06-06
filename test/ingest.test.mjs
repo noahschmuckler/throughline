@@ -126,9 +126,9 @@ test('buildProposed: new containers → p*, atoms → a*, target remap', () => {
       { id: 'real_new', type: 'reference_file', title: 'Provider Roster', folder: 'Provider Corner' },
     ],
     atoms: [
-      { type: 'action', body: 'cred check', owner: 'Natalia', due: '2026-06-20', target: 'real_new' },
-      { type: 'observation', body: 'people ask', target: 'c_existing' },
-      { type: 'action', body: 'unsorted', target: null },
+      { type: 'action', body: 'cred check', owner: 'Natalia', due: '2026-06-20', target: 'real_new', suggested: 'real_new' },
+      { type: 'observation', body: 'people ask', target: 'c_existing', suggested: 'c_other' },
+      { type: 'action', body: 'unsorted', target: null, suggested: 'c_other' },
       { type: 'decision', body: 'inbox one', target: 'inbox' },
     ],
   };
@@ -150,6 +150,13 @@ test('buildProposed: new containers → p*, atoms → a*, target remap', () => {
   assert.equal(p.atoms[2].target, null);
   assert.equal(p.atoms[3].target, 'inbox');
   assert.ok(!('assigned_to' in p.atoms[1]), 'non-actions carry no action fields');
+
+  // suggested_target: the draft model's pick survives even when target is null,
+  // and remaps through p* like target does.
+  assert.equal(p.atoms[0].suggested_target, 'p1');         // created id remapped
+  assert.equal(p.atoms[1].suggested_target, 'c_other');    // differs from target — both kept
+  assert.equal(p.atoms[2].suggested_target, 'c_other');    // unassigned atom still carries the suggestion
+  assert.equal(p.atoms[3].suggested_target, null);         // absent → null
 });
 
 test('buildProposed: project new container keeps framework', () => {
