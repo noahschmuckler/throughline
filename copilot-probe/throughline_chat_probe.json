@@ -1,0 +1,54 @@
+{
+  "_artifact": "throughline.chat_about_this",
+  "_schema": "probe-v0",
+  "version_hash": "tl_9f3a1c77",
+  "created_at": "2026-06-05T00:00:00Z",
+  "raw_dump": "Okay, Natalia's provider corner spreadsheet — people keep asking her the same handful of questions over and over, like who's taking new Medicaid patients and whose panel is closed. And I think some of the credentialing is about to lapse for a few people but I'm honestly not sure who. I need to figure out what to actually DO with this spreadsheet so it stops living in her head. Maybe make it a reference thing in Throughline? And there's probably an action in here about the credentialing.",
+  "file_refs": [
+    {
+      "ref_id": "f1",
+      "path": "IMFM_Provider_Roster_2026.xlsx",
+      "note": "The spreadsheet the dump is about. Lives in the shared OneDrive Provider Corner folder."
+    }
+  ],
+  "proposed": {
+    "containers": [
+      {
+        "id": "p1",
+        "kind": "reference_file",
+        "title": "Provider Roster",
+        "goal_or_purpose": "",
+        "framework": null,
+        "bind_folder": null,
+        "confidence": 0.4,
+        "note": "Heuristic guessed a reference from the words 'spreadsheet' + 'reference thing'. No detail — the text pass cannot read the .xlsx."
+      }
+    ],
+    "atoms": [
+      {
+        "id": "a1",
+        "kind": "action",
+        "body": "Check which providers have credentialing about to expire.",
+        "target": "p1",
+        "assigned_to": null,
+        "due_date": null,
+        "source_ref": null,
+        "confidence": 0.5,
+        "note": "Vague — the dump says 'some' but names no one and gives no dates."
+      },
+      {
+        "id": "a2",
+        "kind": "observation",
+        "body": "People keep asking Natalia who is accepting new Medicaid patients.",
+        "target": "p1",
+        "source_ref": null,
+        "confidence": 0.7
+      }
+    ]
+  },
+  "needs_clarification": [
+    "Which specific providers have lapsing credentialing, and by when?",
+    "Should this be a reference_file or a project? What would the operational goal be?",
+    "Are there recurring questions in the file worth capturing as the reference's purpose?"
+  ]
+}

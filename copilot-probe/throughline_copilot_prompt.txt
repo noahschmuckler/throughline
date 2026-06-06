@@ -1,0 +1,43 @@
+You are helping me triage a brain-dump for a system called Throughline. I have a JSON
+file and a spreadsheet, both in my OneDrive. Your job is to OPEN the spreadsheet,
+compare it against my draft, and hand back corrected filing decisions.
+
+STEP 1 — Open both files:
+  - The JSON: throughline_chat_probe.json  (read "raw_dump", "proposed", "needs_clarification")
+  - The spreadsheet it references in file_refs: IMFM_Provider_Roster_2026.xlsx
+    Read BOTH tabs ("Roster" and "FAQ").
+
+STEP 2 — Answer my actual question in one or two plain sentences first:
+  "What do I need to do with this spreadsheet?"
+
+STEP 3 — Then return ONE json code block and NOTHING after it. It must be a single
+JSON object: a verdict for every proposed id (p1, a1, a2), plus any NEW items the
+spreadsheet reveals that my draft missed (give those new ids n1, n2, ...).
+
+Verdict shape per id:
+  "verb": one of accept | edit | drop | recategorize | create | merge_into
+  "title" / "body": only if you are changing or adding text
+  "kind": for atoms — action | observation | decision | outcome ; for containers — reference_file | project
+  "framework": for a project only — kanban | pdsa | milestone | timeline | null
+  "target": the container id an atom files into
+  "source_ref": REQUIRED whenever your decision is grounded in the spreadsheet.
+                Format: "SheetName!cell-or-range" (e.g. "Roster!A3:H3" or "FAQ!A2").
+                If you can't cite a cell, say so in "note" instead of inventing one.
+  "due_date": YYYY-MM-DD if the file implies a deadline
+  "note": one short line of reasoning
+  "confidence": 0.0–1.0
+
+Rules:
+  - Do NOT echo my atom/container text back unless you changed it.
+  - Every claim that comes from the spreadsheet MUST carry a source_ref pointing to the
+    exact cell/row. If you assert something with no source_ref, I will assume you guessed.
+  - It is fine to drop or downgrade something in my draft if the file contradicts it.
+  - Keep the JSON strictly valid — no trailing commas, no comments, no prose inside it.
+
+Example of the JSON shape (illustrative only — use the real file contents):
+{
+  "p1": {"verb": "edit", "kind": "reference_file", "title": "...", "note": "...", "source_ref": "FAQ!A1:B6", "confidence": 0.9},
+  "a1": {"verb": "edit", "body": "...", "due_date": "2026-06-20", "source_ref": "Roster!A3:H11", "confidence": 0.9},
+  "a2": {"verb": "accept", "source_ref": "FAQ!A2", "confidence": 0.8},
+  "n1": {"verb": "create", "kind": "action", "body": "...", "target": "p1", "source_ref": "Roster!E2:F17", "note": "missed by the draft", "confidence": 0.85}
+}
