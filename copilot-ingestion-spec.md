@@ -417,6 +417,17 @@ decision set) worked and is worth keeping — folding the §3 format into the
 initial `_instructions` risks Copilot skipping the conversation and jumping to
 output. v2 ships the decision-set request as a second copy-paste prompt.
 
+**Engine reliability lesson (2026-06-06, acceptance run):** in the 4th
+iteration session Copilot hard-refused the decision-set prompt ("sorry, it
+looks like I can't chat about this") after a good consult reply — no recourse,
+no explanation; suspects are repeated structured-output prompts reading as
+jailbreak-y or the dump's clinical content (controlled substances) tripping a
+filter on the mechanical-JSON turn. **Consequence: Copilot demotes to an
+optional engine; the primary reasoner becomes gpt-5.4 via cdsapi (`/api/consult`,
+ticket T13)** — the bundle/decision-set/gate pipeline is engine-agnostic by
+design, so only the transport changes. Copilot remains the only OneDrive-binary
+reader until vendored SheetJS closes that gap.
+
 **Inbound channel lesson:** Copilot printed the decision set **in-chat**, not as
 a downloadable file — it's inconsistent about producing downloads. So v2's
 import surface is a **paste field first, file picker second** (the Downloads

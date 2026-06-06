@@ -44,12 +44,57 @@ decision set failed strict JSON.parse and fell through to the freetext path
 candidate extraction (longest first) + a pure-code repair pass (trailing
 commas, smart quotes, BOM/zero-widths) before giving up, and the router never
 entry-ifies JSON-looking input — a still-unparseable paste errors visibly in
-the modal (`looksLikeJson`). 69/69 green. **Awaiting acceptance run round 2** —
-replay the real braindump end-to-end (re-export "Chat about this" so a stash
-exists → consult → decision-set prompt → paste → review → commit). If round 2's
-paste STILL won't parse, the modal now says so — capture the failing text for
-the gpt-5.4 repair pass (§4B), which remains the deferred backstop. After
-acceptance: sprint retro → next slice per VISION.md E3 sequence.
+the modal (`looksLikeJson`). 69/69 green (tests pass; the end-to-end loop is
+NOT yet verified — see below for why).
+
+## NEXT SPRINT (user-requested, plan fresh after this context clear) — native consult engine on cdsapi gpt-5.4
+
+**Why (2026-06-06 evening, acceptance run round 2):** in the user's FOURTH
+Copilot session of this iteration loop, the consult prompt worked but the
+decision-set prompt got a hard refusal — "sorry, it looks like I can't chat
+about this. Let's try a different topic." — with no recourse except a new
+chat. Cause unknown (suspects: repeated structured-output prompts reading as
+jailbreak-y, or the braindump's CONTENT — high-dose opioids/benzos/tapering —
+tripping a safety filter on a mechanical-JSON demand; cheap diagnostic
+someday: same two prompts on a banal topic). Conclusion either way: **a
+load-bearing pipeline cannot depend on an engine that refuses unpredictably.**
+The user has dozens of programs to process. Copilot demotes to an OPTIONAL
+path (it's still the only reader of OneDrive binaries until SheetJS lands);
+the primary reasoner becomes **gpt-5.4 via cdsapi**.
+
+**The architecture already supports this** — bundle → consult → decision set →
+gate → review is engine-agnostic; only the transport changes (no copy-paste:
+the reply pipes STRAIGHT into the existing gate + decisions-mode review).
+
+**Design sketch (validate in plan mode, don't trust blindly):**
+- **Server:** new `/api/consult` in BOTH backends (Worker may 501 like fs/*):
+  body `{bundle, messages:[{role,content}…]}` → build one prompt (cdsapi
+  `single_response` is STATELESS — serialize bundle + full turn history into
+  the user prompt each round; expected history is short, a few turns) →
+  `llmCall({tier:'escalate'})` → **gpt-5.4** (tier map in `shared/llm.js`,
+  already wired, never yet used). Runtime-agnostic prompt-assembly helper in
+  `shared/` or `public/ingest.js` so tests can cover it.
+- **Front-end:** a minimal chat panel (likely launched from the triage
+  sidebar next to "💬 Chat about this", or replacing it as the primary) —
+  message list + input + busy state (gpt-5.4 will be SLOWER than mini; T12
+  latency lessons apply: elapsed indicator + cancel). Seed turn 1 with
+  BUNDLE_INSTRUCTIONS + the bundle (consult). A **"→ Decision set"** button
+  sends DECISION_PROMPT as the next turn and routes the reply through
+  `parseDecisionSet` → `resolveDecisions` → `openDecisionsReview` — the whole
+  v2 back-half reused verbatim. Keep the conversation in memory (maybe stash
+  alongside pending_ingest for resume).
+- **Copilot path stays** as the secondary engine (📋 Paste from Copilot is
+  unchanged); Mode B binaries remain Copilot-only until vendored SheetJS
+  (already DECIDED) lets Throughline extract xlsx → text into the bundle,
+  which would close most of that gap too.
+- **Open questions for the plan:** where the chat UI lives (triage overlay vs
+  own modal/route); token budget for resubmitted history (8 KB dump + 38-
+  container summary + turns — fine for now, watch it); does cdsapi/gpt-5.4
+  have its own content filters (TEST EARLY with the real opioid-content
+  braindump — that's the whole point); persistence of consult transcripts
+  (probably an entry note or nothing, v1 of this = ephemeral).
+- Ticket: **T13** (TICKETS.md). After this ships: sprint retro → VISION.md E3
+  sequence (components model E3.1 etc.).
 
 ## Vision — `VISION.md` (the next big direction)
 
