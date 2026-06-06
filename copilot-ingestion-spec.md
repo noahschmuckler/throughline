@@ -203,8 +203,9 @@ The probe showed refs are reliable at **column/region** granularity, wrong at
 exact-cell (a1 cited a range that missed two of the four rows it named correctly).
 So:
 - Parse `Sheet!range`. Verify the **sheet exists** and the **range is in-bounds**
-  of the file's used range (Throughline can read the xlsx locally via the lens /
-  a SheetJS-style reader). ✅ → `source_ok`.
+  of the file's used range, read server-side via **vendored SheetJS** (see §5
+  note — bundled into the deploy zip, no separate install on orange). ✅ →
+  `source_ok`.
 - Sheet missing / range out-of-bounds → `source_unverified` (flag, **do not drop**).
 - Substantive `create`/`edit` body with **no** `source_ref` → `ungrounded`
   (high-scrutiny flag in triage).
@@ -259,6 +260,25 @@ normalizer defaults it on read. This is what makes every doc-grounded atom
 **re-auditable against the real file via the lens** (the whole trust model in §4C).
 SteadyHand carried the same field in its extraction schema.
 
+### The xlsx reader — vendored SheetJS (DECIDED 2026-06-06)
+§4C reads cell ranges server-side. Use **SheetJS Community Edition** (`xlsx`,
+Apache-2.0), **vendored as a single pure-JS file into the deploy bundle**
+(e.g. `vendor/xlsx.mjs`, `import`ed by `server.js`). Rationale:
+- It is pure JS, no native build, no transitive deps, **no network calls** —
+  runs fully offline/locally.
+- **Vendored ⇒ no separate install on orange.** It ships inside the installer
+  zip; Natalia/others never run `npm install` or touch the npm registry. This
+  was the deciding requirement — onboarding must not gain an install step.
+- To an enterprise box it's just more JS read by the already-approved
+  `node.exe`, not a new executable/installer, so allowlisting (AppLocker/WDAC)
+  doesn't gate it.
+- **Tradeoff:** this becomes the Node server's **first runtime dependency**
+  (the deploy kit's "zero runtime deps" line in CLAUDE.md must be updated when
+  this lands) and adds a few hundred KB–~1 MB to the bundle (trivial for a
+  self-downloading installer). Fallback if ever vetoed: a minimal in-house
+  reader (unzip via `zlib` + parse `sheetN.xml` used-range) — more code, zero
+  third-party; only if SheetJS is rejected.
+
 ---
 
 ## 6. Commit semantics (entry-first, id-map)
@@ -299,7 +319,8 @@ Atoms hang off **entries**, so commit can't just write atoms:
   ingestion risk. ("Does this look about right?")
 - **v2 — decisions back in.** Import the decision set, run the full gate (§4),
   land in triage. The real loop. Adds `atom.source_ref`, the home-scoped Downloads
-  browser, and the 5.4 normalize pass.
+  browser, the 5.4 normalize pass, and **vendored SheetJS** for §4C source_ref
+  bounds-checking (bundled in the installer — no separate install).
 - **v3 — auto-expansion.** Only if v2 proves the round-trips are worth automating:
   Copilot requests more detail on a thin item → Throughline extracts → re-export.
   Highest complexity, least-used; deferred on purpose.
@@ -308,11 +329,10 @@ Atoms hang off **entries**, so commit can't just write atoms:
 
 ## 9. Open questions / to verify
 
-- **Consistency:** run the probe prompt 3× — does JSON stay clean? Recalibrates
-  how hard the 5.4 gate must work.
-- **xlsx reader on orange (Node):** §4C/§5 need server-side cell-range reads.
-  Pick a zero-/light-dep reader (SheetJS `xlsx`) — note this would be the Node
-  server's **first runtime dep** (currently zero), so weigh it.
+- **Consistency:** tested **in deployment**, not via a pre-probe — ship the loop
+  and watch how stable Copilot's JSON is across real use; recalibrate how hard the
+  5.4 gate must work from that. (Per Noah: deploy first, then observe consistency.)
+- **xlsx reader:** DECIDED — vendored SheetJS in the bundle (see §5). No longer open.
 - **Email refs:** `source_ref` for `.eml`/`.msg` is a quoted line, not a range —
   §4C needs a text-contains check instead of a cell-bounds check for those.
 - **`state_summary` budget:** at what container count does the summary itself get
