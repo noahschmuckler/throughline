@@ -12,7 +12,7 @@ import {
   buildStateSummary, buildProposed, buildNeedsClarification,
   assembleBundle, versionHash, stableStringify, sessionIdFrom,
   openActionsForContainer, keyPeopleOpen,
-  BUNDLE_ARTIFACT, BUNDLE_SCHEMA, BUNDLE_INSTRUCTIONS, OPENING_PROMPT,
+  BUNDLE_ARTIFACT, BUNDLE_SCHEMA, BUNDLE_INSTRUCTIONS, OPENING_PROMPT, DECISION_PROMPT,
 } from '../public/ingest.js';
 
 // A small workspace: one program (owning the project), one project (1 open +
@@ -173,6 +173,22 @@ test('buildNeedsClarification: unassigned + new container prompts', () => {
   assert.match(q[0], /2 unassigned/);
   assert.match(q[1], /Roster/);
   assert.deepEqual(buildNeedsClarification({ atoms: [{ target: 'c1' }], newContainers: [] }), []);
+});
+
+test('DECISION_PROMPT: verb vocabulary, program rule, user name, _meta echo', () => {
+  const p = DECISION_PROMPT('Noah');
+  assert.match(p, /accept \| edit \| drop \| recategorize \| create \| merge_into/);
+  assert.match(p, /programs cannot hold atoms/i);
+  assert.match(p, /never set target to a type:"program" container/);
+  assert.match(p, /The user is Noah/);
+  assert.match(p, /never to a placeholder like "narrator"/);
+  assert.match(p, /_meta.*version_hash and session_id/);
+  assert.match(p, /no prose, no code fences/);
+  assert.match(p, /new n… keys/);
+  // Empty/missing name falls back to "the user".
+  assert.match(DECISION_PROMPT(''), /The user is the user/);
+  assert.match(DECISION_PROMPT('   '), /The user is the user/);
+  assert.match(DECISION_PROMPT(), /The user is the user/);
 });
 
 test('versionHash: deterministic, key-order independent, sensitive to content', () => {

@@ -3715,6 +3715,19 @@ function commitTriage() {
 // Writes nothing to state and adds no server endpoint — same no-upload spirit
 // as file import. Spec: copilot-ingestion-spec.md §2 / §8 (v1).
 
+// One-time identity for prompt personalization (no real multi-user identity
+// exists yet — that's E2 M0). Asked once, stored per-browser; an empty answer
+// is remembered too ('' = declined: prompts say "the user" and the gate warns
+// instead of aliasing "narrator" owners).
+function getUserName() {
+  let n = null;
+  try { n = localStorage.getItem('throughline:user_name'); } catch { /* storage unavailable */ }
+  if (n !== null) return n;
+  const asked = (prompt('Your name? (used to attribute "I\'ll…" commitments in Copilot prompts)') || '').trim();
+  try { localStorage.setItem('throughline:user_name', asked); } catch { /* ignore */ }
+  return asked;
+}
+
 function downloadJson(obj, filename) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);

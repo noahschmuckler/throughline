@@ -38,6 +38,34 @@ export const OPENING_PROMPT =
   'I\'ve attached a Throughline ingestion bundle (JSON). Follow its _instructions field: ' +
   'help me break down and file the raw_dump — don\'t critique the JSON format.';
 
+// The SECOND prompt (kept separate from _instructions on purpose — folding the
+// output format into the bundle invites Copilot to skip the conversation and
+// jump straight to JSON; spec §7b). Pasted after the consult to request the
+// spec §3 decision set. Probe-2 calibrations baked in: demand the _meta echo
+// explicitly (it won't come back otherwise), forbid program targets (atoms
+// would be invisible on the program dashboard), and name the user so
+// first-person commitments don't land on a "narrator" placeholder.
+export function DECISION_PROMPT(userName) {
+  const name = (userName || '').trim() || 'the user';
+  return (
+    'Now return your verdicts as ONE raw JSON object — no prose, no code fences, nothing before ' +
+    'the opening { or after the closing }. Key it by my item ids exactly as they appear in the ' +
+    "bundle's proposed{} (the a… atoms and p… containers). Use new n… keys for atoms you are adding " +
+    'and new p… keys for new containers. Each value is a verdict object: a "verb" — one of accept | ' +
+    'edit | drop | recategorize | create | merge_into — plus only the fields you are setting: "kind" ' +
+    '(observation | decision | action | outcome; containers: project | reference_file), "body" or ' +
+    '"title", "goal_or_purpose" (new containers), "target" (a real container id from state_summary, ' +
+    'one of my p…/n… ids, or "inbox"; for merge_into, the surviving atom id), "framework" (projects ' +
+    'only), "assigned_to", "due_date" (YYYY-MM-DD), "source_ref" (quote the raw_dump line that grounds ' +
+    'it), "note" (one line of reasoning), "confidence" (0.0–1.0). RULES: programs cannot hold atoms — ' +
+    'never set target to a type:"program" container; file into a project or reference file within ' +
+    `that program, creating one if needed. The user is ${name} — attribute first-person commitments ` +
+    `("I'll…", "my…") to ${name}, never to a placeholder like "narrator". Include a "_meta" object ` +
+    "echoing the bundle's version_hash and session_id verbatim so the import can confirm you answered " +
+    'against the current draft.'
+  );
+}
+
 // Open action atoms in a container: action atoms with no closing outcome.
 // This is the single source for the open-action rule — app.js's openActionsOf()
 // delegates here so the browser UI and the bundle never drift.
