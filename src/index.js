@@ -8,7 +8,7 @@
 
 import { atomizeEntry } from '../shared/atomize.js';
 import { classifyProject } from '../shared/classify.js';
-import { makeLLMCall } from '../shared/llm.js';
+import { makeLLMCall, describeLLM } from '../shared/llm.js';
 
 const KV_KEY = 'throughline:state';
 
@@ -91,7 +91,9 @@ async function handleAtomizeRequest(request, env) {
   try {
     const llmCall = makeLLMCall(env);
     const result = await atomizeEntry(entry, { projects, llmCall });
-    return json(result);
+    // llm = the model the provider WOULD use (null = heuristic-only config);
+    // result.source says whether it actually produced this draft (T8).
+    return json({ ...result, llm: describeLLM(env, 'reason') });
   } catch (err) {
     return json({ error: err.message }, { status: 500 });
   }

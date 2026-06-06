@@ -21,7 +21,7 @@ import { listFolder, openFile } from './lib/files.js';
 import { setupStatus, listSetupFolder, bindFolder, dbInfo } from './lib/setup.js';
 import { atomizeEntry } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
-import { makeLLMCall } from './shared/llm.js';
+import { makeLLMCall, describeLLM } from './shared/llm.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '8787', 10);
@@ -97,7 +97,9 @@ async function handleAtomize(req, res) {
   const projects = Array.isArray(body?.projects) ? body.projects : [];
   try {
     const result = await atomizeEntry(entry, { projects, llmCall });
-    return sendJson(res, 200, result);
+    // llm = the model the provider WOULD use (null = heuristic-only config);
+    // result.source says whether it actually produced this draft (T8).
+    return sendJson(res, 200, { ...result, llm: describeLLM(process.env, 'reason') });
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   }

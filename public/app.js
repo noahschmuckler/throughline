@@ -3369,6 +3369,14 @@ function triageTotals() {
   return { total, assigned };
 }
 
+// Who produced this draft (T8). Three states: the model ran; the model was
+// configured but degraded to the heuristic (the previously-invisible case);
+// no model configured at all.
+function triageProvenance() {
+  if (triage.source === 'llm') return `draft by ${triage.llm || 'model'}`;
+  return triage.llm ? `heuristic draft — ${triage.llm} failed` : 'heuristic draft (no model configured)';
+}
+
 async function openTriageModal(entryId) {
   const entry = state.entries.find(e => e.id === entryId);
   if (!entry) return;
@@ -3406,6 +3414,7 @@ async function openTriageModal(entryId) {
   triage = {
     entryId,
     source: data.source || 'heuristic',
+    llm: data.llm || null, // model the provider would use; null = heuristic-only config (T8)
     clusters: (data.clusters || []).map((c, ci) => ({
       id: c.id || 'cl_' + ci,
       name: c.name || 'Cluster',
@@ -3469,7 +3478,9 @@ function renderTriage() {
     else if (assignedC) badge = `<span class="t-assigned" style="background:${projectColor(assignedC)}">✓ ${escHtml(assignedC.title)}</span>`;
     else if (allAssigned) badge = `<span class="t-suggest">split across projects</span>`;
     else if (!c.suggestedId) badge = `<span class="t-orphan">⚠ no matching project</span>`;
-    else { const s = getContainer(c.suggestedId); badge = s ? `<span class="t-suggest" style="color:${projectColor(s)}">AI suggests: ${escHtml(s.title)}</span>` : ''; }
+    // "AI suggests" only when a model actually produced the draft — a heuristic
+    // keyword match labeled as AI was indistinguishable from a real run (T8).
+    else { const s = getContainer(c.suggestedId); badge = s ? `<span class="t-suggest" style="color:${projectColor(s)}">${triage.source === 'llm' ? 'AI suggests' : 'keyword match'}: ${escHtml(s.title)}</span>` : ''; }
 
     const pills = [];
     if (counts.obs) pills.push(`<span class="t-pill o">OBS ${counts.obs}</span>`);
@@ -3533,7 +3544,7 @@ function renderTriage() {
   panel.innerHTML = `
     <div class="t-header">
       <div>
-        <div class="t-eyebrow">Throughline · Entry triage${triage.source === 'heuristic' ? ' · heuristic' : ' · AI'}</div>
+        <div class="t-eyebrow">Throughline · Entry triage · ${escHtml(triageProvenance())}</div>
         <div class="t-title">${escHtml(entry.title || '(untitled)')}</div>
         <div class="t-sub">${fmtDate(entry.occurred_at)}${(entry.participants || []).length ? ' · ' + escHtml(entry.participants.join(', ')) : ''}</div>
       </div>

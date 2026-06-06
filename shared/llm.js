@@ -47,6 +47,21 @@ function tierModel(provider, tier, env) {
     || TIER_MODEL[provider]?.reason;
 }
 
+// Human-readable descriptor of the model makeLLMCall(env) would use for a
+// tier — "cdsapi · gpt-mini" — or null when it would return null (heuristic).
+// Surfaced by /api/atomize so the triage UI can say WHO produced the draft
+// (T8: a silent heuristic degradation was indistinguishable from a model run).
+export function describeLLM(env = {}, tier = 'reason') {
+  const provider = String(env.LLM_PROVIDER || 'heuristic').toLowerCase();
+  if (provider === 'anthropic' && env.ANTHROPIC_API_KEY) {
+    return `anthropic · ${env.ANTHROPIC_MODEL || tierModel('anthropic', tier, env)}`;
+  }
+  if (provider === 'cdsapi') {
+    return `cdsapi · ${env.LLM_MODEL || tierModel('cdsapi', tier, env)}`;
+  }
+  return null;
+}
+
 export function makeLLMCall(env = {}) {
   const provider = String(env.LLM_PROVIDER || 'heuristic').toLowerCase();
 

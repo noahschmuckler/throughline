@@ -294,7 +294,7 @@ bounds-checking — but only needed at v2.
 v3 auto-expansion.**
 
 **STATUS — v1 SHIPPED (read-only consult), pushed on `copilot-ingestion`, tests
-green (43/43), NOT merged.** What v1 added:
+green (47/47), NOT merged.** What v1 added:
 - **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
   imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
   `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
@@ -327,8 +327,25 @@ the four consult tasks), and `chatAboutThis()` copies **`OPENING_PROMPT`** to th
 clipboard (also shown in the alert; clipboard can fail on http) so the chat opens
 pointed at `_instructions`. `_instructions` is NOT in `version_hash` (boilerplate,
 not draft). Spec §2 records the lesson. **Awaiting the user's orange re-pull +
-re-run (Option A preview) to verify both fixes; note v1 is front-end-only so
-copying `public\` over the install also works.**
+re-run (Option A preview) to verify both fixes.**
+
+**Atomize provenance — SHIPPED (2026-06-06, T8):** a 75-atom draft from a real
+8 KB dump was unattributable (model or silent heuristic fallback?). Now:
+`describeLLM(env, tier)` in `shared/llm.js`; both `/api/atomize` handlers attach
+`llm` ("cdsapi · gpt-mini" | null) beside the existing `source`; the triage
+eyebrow reads "draft by cdsapi · gpt-mini" / "heuristic draft — <llm> failed" /
+"heuristic draft (no model configured)"; and the cluster badge says **"keyword
+match:"** instead of "AI suggests:" when the heuristic ran (it previously
+mislabeled keyword matches as AI). Tiering confirmed implemented: atomize = tier
+`reason` (cdsapi→gpt-mini), classify = tier `classify` (→gpt-nano); `LLM_MODEL`
+unset means the tier map applies. Tests: `test/atomize.test.mjs`. **NOTE: this
+slice touches `server.js` — orange preview needs the branch-run flow, not just a
+`public\` copy.**
+
+**The next big direction is captured in `VISION.md` Epic E3** (modular project
+components + the three-stage LLM collaborator: consult → structure proposals →
+mutation routing). Tickets T7/T9/T10/T11 hang off it; sprint planning happens at
+the next TICKETS.md processing session.
 
 **Previewing a dev branch on orange (how the user tests):** the running app is the
 installed copy at `%USERPROFILE%\throughline` served by the **`ThroughlineServer`**

@@ -5,7 +5,7 @@ The forward-looking design doc. Builds on `design-conversation-05302026.md`
 A–G); issues/ideas from real use accumulate in `TICKETS.md`. This file is where
 the *next* big direction lives, and what we plan coding sprints against.
 
-Last updated: 2026-05-31.
+Last updated: 2026-06-06.
 
 ---
 
@@ -307,6 +307,130 @@ the source (backup first; clear dangling `program_id`); (3) move any bound files
 Explorer + re-point bindings; then Amanda installs pointed at the new folder and her
 wizard shows "✓ Existing workspace — N projects." Until federation lands, Noah
 switches circles by repointing `THROUGHLINE_DB` (motivation to prioritize M3).
+
+## Epic E3 — Modular components & the LLM collaborator (added 2026-06-06)
+
+Origin: a year-old north-star experience — an early ChatGPT session that, for ten
+days, acted as a true PM collaborator: it held context across many initiatives,
+and on each brain dump it *talked back usefully, then offered to create an
+internal document with a structure fitted to the goal* (csv for structured info,
+markdown for narrative, checklists, reference files, email drafts). Recreating
+that has been the project ever since. The 2026-06-06 live Copilot consult (a real
+program retool, `copilot-ingestion` v1) proved the conversational half works and
+exposed exactly what's missing: **the artifact** — Copilot proposed a genuinely
+good novel structure (a loop tracker) and had no way to hand it to Throughline,
+and Throughline had no shape that fit it.
+
+### The collaborator has three stages
+
+1. **Understand a dump** — conversational consult on raw input. *Shipped*
+   (`copilot-ingestion` v1: bundle out, prose back).
+2. **Instantiate structure** — the LLM proposes the ideal PM surface for the
+   situation *and emits an artifact that constructs it* (program + projects +
+   components + seeded atoms), validated by the gate, built by the existing
+   provisioning machinery.
+3. **Route ongoing input** — unstructured input (dictation, email, `.loop`
+   summaries) updates the right *existing* structures: closes actions with
+   outcomes, advances board cards, files atoms into the right entries/projects,
+   appends glidepath points + interventions. The decision-set/gate/commitTriage
+   architecture was built pointing at exactly this.
+
+The wizard's two-radio-button classify stays as the fallback, but **structure
+should emerge conversationally** — the consult becomes the real front door for
+shaping new work. (Real-use verdict: the wizard's suggestions underwhelm; the
+consult's didn't.)
+
+### Modular components — composition free, vocabulary closed
+
+Replace "a project HAS ONE framework" with "a project is COMPOSED of
+components." Today `renderProjectOverview` branches on `c.framework` to pick one
+main panel; the components model generalizes that to N panels per project:
+`components: [{type, config}, …]`.
+
+The load-bearing guardrail (Noah's own): *the more freeform projects get, the
+more error-prone LLM-emitted updates become.* So the trade is explicit —
+
+- **Composition is free**: any project can hold a loop-table + a comms kanban +
+  a milestone list + a date timeline. (The motivating retool wanted exactly that
+  and would otherwise be 5 single-view projects in a trenchcoat.)
+- **The vocabulary is closed**: components come from a typed registry (the
+  existing `FRAMEWORKS` pattern, generalized) — each type has a renderer and a
+  **strict config schema**. An LLM authoring a structure proposal picks from a
+  menu and fills schema-validated fields; it **never invents structure**. The
+  ingestion gate validates every component config the way it bounds-checks
+  `source_ref`.
+- **The system grows by vocabulary, not looseness**: a situation that doesn't
+  fit (this week: the loop tracker) becomes a new registry row + renderer — not
+  a loosening of the model.
+
+Back-compat: `framework: 'kanban'` normalizes to `components: [{type:'kanban'}]`
+in `normalizeContainer` (same pattern as every schema bump so far). The four
+frameworks become the first four component types.
+
+### The table component (the missing view type)
+
+Kanban fits **homogeneous pipelines** — discrete deliverables flowing through
+shared stations (the Throughline-features board works great). It does *not* fit
+stakeholder-divergent knowledge work, where every open loop follows its own path
+("asked Jessica by email" → "replied" → "drafting a legal doc" are not stations
+the *next* loop will visit). For that, the right view is a **compact table**:
+one row per loop — loop · owner · last touch · status — sorted by staleness.
+
+Two table components, sequenced:
+
+- **Atom-backed table first** (the loop tracker): rows are **action atoms** —
+  owner = `assigned_to`, last touch = `updated_at`, status = `workflow_state`.
+  Deliberately shares kanban's data model, so table ⇄ board is a pure re-render
+  and "convert to a clean Kanban once decisions land" is the existing framework
+  switch. This resolves ticket T9.
+- **Spreadsheet-backed table later** (Jason-style; Natalia's existing xlsx):
+  don't build a spreadsheet — **bind to one**, per the lens philosophy. A
+  read-only component configured `{file, sheet, columns}` surfaces live cells
+  from a real OneDrive workbook via the folder lens + the already-decided
+  vendored SheetJS. The workbook stays the source of truth; Throughline never
+  writes it.
+
+### Settled by this design pass (no build needed)
+
+- **Decision nodes — no new atom type.** An open question lives as an action
+  atom ("Decide X vs Y") in its contextual display; resolution arrives as an
+  entry holding the **closing outcome** ("resolved at this meeting",
+  `parent_atom_id` → the action) *plus a decision atom* — associated by
+  co-occurring in the same entry. The decision is what future reports surface.
+  The data model supports this today; the table view just renders open-question
+  actions distinctly (a tag, not a type).
+- **Constraints** live in the project/program summary.
+
+### Back pocket (named, deliberately not built)
+
+- **Workstreams as a first-class concept** — the atom_sandbox lesson stands:
+  hundreds of hand-built atom chains were overwhelming and not useful. The name
+  "Throughline" keeps the *idea* (don't drop loops; watch work flow); the
+  loop-table is the lightweight version. Revisit only if the table proves
+  insufficient.
+- **LLM-generated narrative updates** per project — possibly outmoded by a good
+  dashboard; if ever wanted, the export bundle is already the machine-readable
+  input a narrator would consume.
+
+### Sequence (E3.x stages; plan sprints at the next processing session)
+
+1. **E3.0 quick wins** — T10 kanban-states editor; T8 atomize provenance
+   *(shipped 2026-06-06)*; verify orange cdsapi connectivity.
+2. **E3.1 components model** — registry + `components[]` + migration + edit UI.
+   **The keystone; everything below targets it.** (Ticket T11.)
+3. **E3.2 atom-backed table component** — the loop tracker (closes T9); the
+   CAHPS/DOH retool program is the live pilot.
+4. **E3.3 ingestion v2 as specced** — decision set + gate + normalize +
+   SheetJS (`copilot-ingestion-spec.md` §8; independent of E3.1, can
+   interleave). Includes the T7 cluster-level triage relief.
+5. **E3.4 structure proposals (v2.5)** — the bundle's `_instructions` grows the
+   component menu + schemas; Copilot returns a layout; the gate validates;
+   provisioning constructs it. *Stage-2 collaborator: the ChatGPT moment,
+   recreated with a dashboard.*
+6. **E3.5 mutation decisions** — decision sets that update existing state
+   (close/advance/append/glidepath); then T6 plugs in email/`.loop` as input
+   channels. *Stage-3 collaborator: the full unlock.*
+7. **Parked** — xlsx-backed table; narrative updates; workstreams; circles (§M3).
 
 ## Proposed sprint sequence (reordered by the "get it to Natalia" goal)
 
