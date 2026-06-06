@@ -37,11 +37,19 @@ pre-pass). Headless-verified via the temp-hook pattern (hooks removed).
 bounds-check, `atom.source_ref` persistence, committed-state edits (E3.5),
 components model (E3.1 — see VISION.md Epic E3).
 
-**WHERE WE LEFT OFF:** awaiting the user's orange acceptance run — replay the
-real braindump end-to-end (re-export "Chat about this" so a stash exists →
-consult → decision-set prompt → paste → review → commit). Touches server-side
-nothing new since the T8 slice, but preview still needs the branch-run flow.
-After acceptance: sprint retro → next slice per VISION.md E3 sequence.
+**WHERE WE LEFT OFF:** acceptance run round 1 found an intake bug — the pasted
+decision set failed strict JSON.parse and fell through to the freetext path
+(garbage Inbox entry titled "{", which the user should delete). FIXED
+(2026-06-06 evening): `parseDecisionSet` now does string-aware balanced-brace
+candidate extraction (longest first) + a pure-code repair pass (trailing
+commas, smart quotes, BOM/zero-widths) before giving up, and the router never
+entry-ifies JSON-looking input — a still-unparseable paste errors visibly in
+the modal (`looksLikeJson`). 69/69 green. **Awaiting acceptance run round 2** —
+replay the real braindump end-to-end (re-export "Chat about this" so a stash
+exists → consult → decision-set prompt → paste → review → commit). If round 2's
+paste STILL won't parse, the modal now says so — capture the failing text for
+the gpt-5.4 repair pass (§4B), which remains the deferred backstop. After
+acceptance: sprint retro → next slice per VISION.md E3 sequence.
 
 ## Vision — `VISION.md` (the next big direction)
 

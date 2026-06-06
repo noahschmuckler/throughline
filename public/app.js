@@ -8,7 +8,7 @@ import {
   buildStateSummary, buildProposed, buildNeedsClarification,
   assembleBundle, openActionsForContainer, OPENING_PROMPT, DECISION_PROMPT,
 } from './ingest.js';
-import { parseDecisionSet, isBundle, isDecisionSet, resolveDecisions } from './gate.js';
+import { parseDecisionSet, isBundle, isDecisionSet, looksLikeJson, resolveDecisions } from './gate.js';
 
 const STATE_URL = '/api/state';
 const SAVE_DEBOUNCE_MS = 600;
@@ -4022,6 +4022,15 @@ function handleCopilotIntake(text, modal) {
   const hint = (msg) => { const el = modal?.querySelector('#ci-hint'); if (el) el.textContent = msg; };
   const obj = parseDecisionSet(t);
 
+  // Tried to be JSON but didn't parse (even after the repair pass): error
+  // visibly and keep the modal open. Never entry-ify broken JSON — the first
+  // live run turned a malformed paste into a garbage entry titled "{".
+  if (!obj && looksLikeJson(t)) {
+    hint('That looks like JSON but it didn\'t parse — it\'s probably truncated or malformed. ' +
+      'Ask Copilot for "the same JSON again, complete and raw, no commentary", then paste that. Nothing was imported.');
+    return;
+  }
+
   if (obj && isBundle(obj)) {
     // The bundle itself — pair it for the decision set that follows (covers
     // pre-stash exports and cross-device imports).
@@ -4047,8 +4056,14 @@ function handleCopilotIntake(text, modal) {
     return;
   }
 
-  // Freetext (a prose Copilot reply, an email, anything) → the existing
-  // capture path: Inbox entry, one click from Atomize.
+  if (obj) {
+    // Valid JSON, but neither artifact — don't guess, don't entry-ify.
+    hint('That JSON parsed, but it isn\'t a chat-about-this bundle or a decision set — nothing was imported.');
+    return;
+  }
+
+  // Genuine freetext (a prose Copilot reply, an email, anything) → the
+  // existing capture path: Inbox entry, one click from Atomize.
   closeModal();
   ciPendingBundle = null;
   importText(t);

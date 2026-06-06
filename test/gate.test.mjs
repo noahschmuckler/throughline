@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseDecisionSet, isBundle, isDecisionSet, resolveDecisions } from '../public/gate.js';
+import { parseDecisionSet, isBundle, isDecisionSet, looksLikeJson, resolveDecisions } from '../public/gate.js';
 import { BUNDLE_ARTIFACT } from '../public/ingest.js';
 
 // ---- fixture ---------------------------------------------------------
@@ -117,6 +117,32 @@ test('parseDecisionSet: tolerant (fences, prose, garbage)', () => {
   assert.equal(parseDecisionSet('no json here'), null);
   assert.equal(parseDecisionSet(''), null);
   assert.equal(parseDecisionSet(null), null);
+});
+
+test('parseDecisionSet: real-paste pathologies (first live v2 run)', () => {
+  // Trailing commas — the classic LLM emission error.
+  assert.deepEqual(parseDecisionSet('{"a1":{"verb":"accept",},}'), { a1: { verb: 'accept' } });
+  // Smart quotes (chat UIs love converting them).
+  assert.deepEqual(parseDecisionSet('{“a1”:{“verb”:“drop”}}'), { a1: { verb: 'drop' } });
+  // Prose with braces around the real block — balanced-brace candidates pick
+  // the longest parseable object, not a naive first-{-to-last-} slice.
+  const wrapped = 'Sure! Here {is} the set:\n{"a1":{"verb":"accept"},"n1":{"kind":"action","body":"x"}}\nLet me know {if} more.';
+  assert.deepEqual(Object.keys(parseDecisionSet(wrapped)), ['a1', 'n1']);
+  // Braces inside string values don't break candidate extraction.
+  assert.deepEqual(parseDecisionSet('{"a1":{"body":"uses {curly} braces"}}'), { a1: { body: 'uses {curly} braces' } });
+  // Truncation → null (no partial parse).
+  assert.equal(parseDecisionSet('{"a1":{"verb":"accept"},"a2":{"ver'), null);
+  // BOM + zero-width contamination.
+  assert.deepEqual(parseDecisionSet('﻿{"a1":{"verb":"accept"}}'), { a1: { verb: 'accept' } });
+});
+
+test('looksLikeJson: routes broken JSON to an error, prose to freetext', () => {
+  assert.ok(looksLikeJson('{"a1": {"verb": "accept"'));            // truncated
+  assert.ok(looksLikeJson('﻿{ "a1": …'));                     // BOM + broken
+  assert.ok(looksLikeJson('```json\n{"a1":{}}\n```'));             // fenced
+  assert.ok(looksLikeJson('reply: "a1": { "verb": "accept" }'));   // id-key pattern mid-prose
+  assert.ok(!looksLikeJson('Met with Jessica about the covenant.'));
+  assert.ok(!looksLikeJson(''));
 });
 
 test('isBundle / isDecisionSet: sniffing', () => {

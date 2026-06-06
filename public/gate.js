@@ -11,19 +11,69 @@
 
 import { BUNDLE_ARTIFACT } from './ingest.js';
 
-// Tolerant JSON extraction — same approach as parseModelJson in
-// shared/atomize.js (duplicated: shared/ isn't served to the browser; a
-// drift-guard test asserts the two agree on a fenced sample).
+// Tolerant JSON extraction. Stricter inputs than shared/atomize's
+// parseModelJson get the same treatment (fences/prose), but real pasted
+// Copilot replies also arrive with trailing commas, smart quotes, and
+// surrounding prose containing braces — the first live v2 run proved a naive
+// first-{-to-last-} slice + strict JSON.parse silently fails on them. So:
+// string-aware balanced-brace candidates (longest first) + a pure-code
+// repair pass before giving up. The gpt-5.4 repair (§4B) stays deferred for
+// what code can't fix.
+
+// Top-level balanced {...} spans, tracking strings so braces inside values
+// don't miscount. Longest first — the decision set dwarfs any prose aside.
+function jsonCandidates(text) {
+  const out = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"' && depth > 0) { inStr = true; continue; }
+    if (ch === '{') { if (depth === 0) start = i; depth++; }
+    else if (ch === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start !== -1) { out.push(text.slice(start, i + 1)); start = -1; }
+    }
+  }
+  return out.sort((a, b) => b.length - a.length);
+}
+
+// Common LLM JSON pathologies fixable without a model. Only attempted after
+// a strict parse fails, so a quote-balance edge case can't corrupt good input.
+function repairJsonish(s) {
+  return s
+    .replace(/[\u201C\u201D\u201E]/g, '"')  // smart double quotes
+    .replace(/[\u2018\u2019]/g, "'")         // smart single quotes (inside values)
+    .replace(/[\u200B-\u200D\u00A0]/g, ' ') // zero-widths + nbsp
+    .replace(/,\s*([}\]])/g, '$1');           // trailing commas
+}
+
 export function parseDecisionSet(raw) {
   if (raw == null) return null;
   if (typeof raw === 'object') return raw;
-  const text = String(raw);
+  const text = String(raw).replace(/^\uFEFF/, '');
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const body = fenced ? fenced[1] : text;
-  const start = body.indexOf('{');
-  const end = body.lastIndexOf('}');
-  if (start === -1 || end === -1) return null;
-  try { return JSON.parse(body.slice(start, end + 1)); } catch { return null; }
+  const scopes = fenced ? [fenced[1], text] : [text];
+  for (const scope of scopes) {
+    for (const candidate of jsonCandidates(scope)) {
+      try { return JSON.parse(candidate); } catch { /* try repaired */ }
+      try { return JSON.parse(repairJsonish(candidate)); } catch { /* next candidate */ }
+    }
+  }
+  return null;
+}
+
+// "Was this paste ATTEMPTING to be JSON?" — used by the intake router so a
+// malformed decision set errors visibly instead of becoming a freetext entry
+// (the first live v2 run turned a truncated paste into an entry titled "{").
+export function looksLikeJson(text) {
+  const t = String(text || '').replace(/^\uFEFF/, '').trim();
+  return t.startsWith('{') || /```(?:json)?\s*\{/i.test(t) || /"[a-z]\d*\w*"\s*:\s*\{/i.test(t);
 }
 
 export function isBundle(obj) {
