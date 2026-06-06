@@ -121,6 +121,16 @@ Copilot's retrieval mechanism.
 summaries), never the full `state.json` — it's already >100 KB. It exists so
 Copilot can say `"target": "c_def"` against a real container instead of guessing.
 
+> **KNOWN v1 GAP — fix next (program hierarchy).** As built, `buildStateSummary`
+> lists programs/projects/reference_files as **flat, equal `containers`** and drops
+> the program→project relationship: each entry omits **`program_id`**, and
+> `type:"program"` entries omit **`objective`/`key_results`**. So Copilot can't tell
+> which projects belong to which program — yet a project's context is usually set by
+> its parent program and sibling projects. **Fix:** add `program_id` to every
+> container entry and `objective`/`key_results` to program entries (flat list +
+> `program_id` is reconstructable; no nesting needed); update the example above and
+> add a test. Scoped in CLAUDE.md as the immediate next task.
+
 ---
 
 ## 3. Artifact B — the decision set (Copilot's reply)

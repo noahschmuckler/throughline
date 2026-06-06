@@ -73,13 +73,21 @@ deferred V1+ backlog lives in `BUILDPATH.md` §H.)
   `throughline-launcher`, merged to its `main`). **Shipped + live: Noah AND
   Natalia are both onboarded on real orange boxes from this.** See the new
   "Onboarding & distribution" section below.
+- **`main` (current as of 2026-06-06)** — `onboarding-installer` has now been
+  **merged to `main`** (E1.5 shipped), so `main` carries the full stack (V1 +
+  folder-lens + onboarding) plus the Copilot-ingestion design docs. **There is
+  no Cloudflare deploy** — pushing `main` deploys nothing (see Deployment model).
+- `copilot-ingestion` (origin, **the active dev branch**) — branched off `main`.
+  The **Copilot-assisted ingestion** epic. **v1 (read-only consult) is shipped +
+  pushed, NOT merged** — see the "Copilot-assisted ingestion" section below.
 
 Each branch stacks on the previous. Verify what a branch actually adds
 with `git log <parent>..HEAD --oneline` before reading the diff.
-**Guardrail change:** the old "never push" rule is lifted for `folder-lens-mvp`
-**and** `onboarding-installer` (throughline) + `throughline-launcher`/`main`
-(meridian-briefing) — the user asked to push/deploy these to onboard Natalia.
-Still confirm before pushing anything else.
+**Guardrail change:** the old "never push" rule is lifted for `folder-lens-mvp`,
+`onboarding-installer`, **`main`**, and **`copilot-ingestion`** (throughline) +
+`throughline-launcher`/`main` (meridian-briefing) — the user asked to push these.
+Still confirm before pushing anything else. **NB: `copilot-ingestion` is NOT to
+be merged to `main` without the user's review.**
 
 ## Running it / seeing it right now (for a cold start)
 
@@ -260,6 +268,69 @@ when unconfigured, and the wizard **bounces to the dashboard when already config
 a shortcut on Noah's box); `THROUGHLINE_DB` = `…\Throughline\state.json` (the
 ~125 KB real workspace). **The next direction — multi-user "circles" — is paused;
 the full design lives in `VISION.md` §M3.**
+
+## Copilot-assisted ingestion — `copilot-ingestion-spec.md` (active epic, on `copilot-ingestion` branch)
+
+The goal: recover SteadyHand's "brain dump → structured" ingestion, using
+**enterprise Copilot** as the reasoning layer (it can read OneDrive binaries —
+spreadsheets/emails — which the on-network `cdsapi` gpt-5.4/mini pipeline can't).
+**Full design + schemas: `copilot-ingestion-spec.md` (read it first).** Origin of
+the idea: `throughline_copilot_design.md` (Copilot's own draft). The `copilot-probe/`
+folder holds the Mode-B probe (a roster `.xlsx` + prompt) and `copilot_response.txt`
+(Copilot's real reply) that calibrated the design — PASS: Copilot reads binaries and
+returns cell-cited JSON, but `source_ref` is region-accurate not exact-cell, it ignores
+fine fields like `due_date`, and OneDrive *path*-retrieval failed (chat-**attach** works).
+
+Architecture in one line: **two modes** (A = pure text dump; B = doc-grounded
+"what do I do with this spreadsheet") → one **export bundle** out → Copilot →
+**decision set** back → **verify+normalize gate** → the *existing triage overlay*
+(`commitTriage` stays the only writer). Decisions are returned **id-keyed**, not as
+the whole doc, so corruptible substance never leaves Throughline. The gpt-5.4 pass
+is a **field-normalizer + JSON-repair**, not the reasoner. **SheetJS is DECIDED:**
+vendored into the bundle (pure JS, no separate install on orange) for `source_ref`
+bounds-checking — but only needed at v2.
+
+**Phasing (spec §8): v1 read-only consult → v2 decisions-back-in + gate + SheetJS →
+v3 auto-expansion.**
+
+**STATUS — v1 SHIPPED (read-only consult), pushed on `copilot-ingestion`, tests
+green (41/41), NOT merged.** What v1 added:
+- **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
+  imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
+  `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
+  `versionHash` (FNV-1a over a stable stringify), `assembleBundle`. **`app.js`'s
+  `openActionsOf` now delegates to `openActionsForContainer` here** (one open-action
+  rule for UI + bundle).
+- **`public/app.js`** — a **"💬 Chat about this"** button in the triage sidebar →
+  `chatAboutThis()` builds the `throughline.chat_about_this` bundle (spec §2) and
+  downloads it (`downloadJson`; no server upload). `triage.createdIds` tracks
+  containers made during that triage (they become `p*` and are excluded from
+  `state_summary` to avoid dup). `dominantBoundFileRefs` pulls `file_refs` from the
+  dominant bound target's lens folder (else `[]`). **No new server endpoint; schema
+  stays v3.**
+- **`test/ingest.test.mjs`** (13 tests) + **`copilot-probe/sample-chat-about-this.json`**
+  (a generated example bundle).
+
+**IMMEDIATE NEXT TASK (user will ask right after a context clear):** the bundle's
+`state_summary` flattens programs/projects/reference_files as equal `containers`
+and **drops the program→project hierarchy** — `buildStateSummary` omits each
+container's **`program_id`** and a program's **`objective`/`key_results`**, so Copilot
+can't see which projects belong to which program (and a project's context is often
+set by its program + sibling projects). **Fix:** in `buildStateSummary`
+(`public/ingest.js`) add `program_id` to every container entry and `objective`+
+`key_results` to `type:"program"` entries; update spec §2 `state_summary` shape; add
+a test. Flat list + `program_id` is reconstructable — no need to nest. Then the user
+re-pulls and re-runs (Option A preview) to verify.
+
+**Previewing a dev branch on orange (how the user tests):** the running app is the
+installed copy at `%USERPROFILE%\throughline` served by the **`ThroughlineServer`**
+logon scheduled task on `:8787`; it is a *separate folder* from the user's GitHub
+Desktop checkout, and the meridian-briefing install/update tile pulls *published
+releases*, not branches. To preview a branch: `schtasks /End /TN "ThroughlineServer"`
+(+ free port 8787), then from the checkout run
+`node --env-file="$env:USERPROFILE\throughline\.env" server.js` (reuses the real
+shared-OneDrive `.env`); Ctrl+C + `schtasks /Run /TN "ThroughlineServer"` to restore.
+v1 was front-end-only so copying `public\` over the install also works.
 
 ## AI ingestion seam (stub today)
 
