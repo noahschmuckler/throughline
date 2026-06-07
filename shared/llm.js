@@ -75,8 +75,8 @@ export function makeLLMCall(env = {}) {
       console.warn('[llm] LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is unset; using heuristic.');
       return null;
     }
-    return ({ prompt, tier = 'reason' }) =>
-      callAnthropic({ apiKey, model: env.ANTHROPIC_MODEL || tierModel('anthropic', tier, env), prompt });
+    return ({ prompt, tier = 'reason', json = true }) =>
+      callAnthropic({ apiKey, model: env.ANTHROPIC_MODEL || tierModel('anthropic', tier, env), prompt, json });
   }
 
   if (provider === 'cdsapi') {
@@ -121,7 +121,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 const JSON_SYSTEM = 'You are a precise data-extraction service. Respond with raw JSON only — no prose, no markdown fences.';
 
-async function callAnthropic({ apiKey, model, prompt }) {
+async function callAnthropic({ apiKey, model, prompt, json = true }) {
   const res = await fetchRetry(ANTHROPIC_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -132,7 +132,9 @@ async function callAnthropic({ apiKey, model, prompt }) {
     body: JSON.stringify({
       model,
       max_tokens: 4096,
-      system: JSON_SYSTEM,
+      // json:false (consult prose turns) must NOT force the JSON-only system
+      // prompt — the cdsapi path makes the same json-gated distinction.
+      ...(json ? { system: JSON_SYSTEM } : {}),
       messages: [{ role: 'user', content: prompt }],
     }),
   });
