@@ -63,8 +63,10 @@ export function buildAtomizePrompt(entry, { projects = [] } = {}) {
 //   - otherwise: run the heuristic stub. Always returns the output contract.
 export async function atomizeEntry(entry, { projects = [], llmCall = null } = {}) {
   if (llmCall) {
-    // TODO(AI): real model path. Kept defensive so a bad/empty model response
-    // degrades to the heuristic rather than throwing into the request handler.
+    // Kept defensive so a bad/empty model response degrades to the heuristic
+    // rather than throwing into the request handler — but the degradation is
+    // no longer silent (T20): `fail` says WHY, for the eyebrow + server log.
+    let fail = null;
     try {
       const prompt = buildAtomizePrompt(entry, { projects });
       const raw = await llmCall({ prompt, tier: 'reason', json: true });
@@ -72,11 +74,27 @@ export async function atomizeEntry(entry, { projects = [], llmCall = null } = {}
       if (parsed && Array.isArray(parsed.clusters)) {
         return { clusters: normalizeClusters(parsed.clusters, projects), source: 'llm' };
       }
-    } catch {
-      /* fall through to heuristic */
+      fail = describeParseFailure(raw, parsed);
+    } catch (err) {
+      fail = err?.message || 'unknown error';
     }
+    return { clusters: heuristicClusters(entry, projects), source: 'heuristic', fail };
   }
   return { clusters: heuristicClusters(entry, projects), source: 'heuristic' };
+}
+
+// Why did the model path produce nothing usable? Distinguishes the failure
+// modes we suspect on big dumps (T20): empty reply, TRUNCATED JSON (the
+// output-token-ceiling case — unbalanced braces are the tell), reply with no
+// JSON at all, and well-formed JSON missing the clusters[] contract.
+function describeParseFailure(raw, parsed) {
+  if (parsed) return 'reply JSON missing clusters[]';
+  const text = raw == null ? '' : String(raw);
+  if (!text.trim()) return 'empty reply';
+  let opens = 0, closes = 0;
+  for (const ch of text) { if (ch === '{') opens++; else if (ch === '}') closes++; }
+  if (opens > closes) return `reply looks truncated — unbalanced JSON (${text.length} chars)`;
+  return `no parseable JSON in reply (${text.length} chars)`;
 }
 
 // ---- heuristic stub ------------------------------------------------
@@ -186,17 +204,58 @@ function heuristicClusters(entry, projects) {
 
 // ---- model-response normalization ----------------------------------
 
+// Tolerant JSON extraction — mirrors public/gate.js's parseDecisionSet
+// (kept as a copy: shared/ can't import public/, and the seams stay
+// decoupled on purpose). The old naive first-{-to-last-} slice + strict
+// JSON.parse silently failed on real model replies with trailing commas,
+// smart quotes, or prose containing braces (T20 / the v2 intake bug).
+
+// Top-level balanced {...} spans, tracking strings so braces inside values
+// don't miscount. Longest first — the payload dwarfs any prose aside.
+function jsonCandidates(text) {
+  const out = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"' && depth > 0) { inStr = true; continue; }
+    if (ch === '{') { if (depth === 0) start = i; depth++; }
+    else if (ch === '}' && depth > 0) {
+      depth--;
+      if (depth === 0 && start !== -1) { out.push(text.slice(start, i + 1)); start = -1; }
+    }
+  }
+  return out.sort((a, b) => b.length - a.length);
+}
+
+// Common LLM JSON pathologies fixable without a model. Only attempted after
+// a strict parse fails, so a quote-balance edge case can't corrupt good input.
+function repairJsonish(s) {
+  return s
+    .replace(/[\u201C\u201D\u201E]/g, '"')  // smart double quotes
+    .replace(/[\u2018\u2019]/g, "'")         // smart single quotes (inside values)
+    .replace(/[\u200B-\u200D\u00A0]/g, ' ') // zero-widths + nbsp
+    .replace(/,\s*([}\]])/g, '$1');           // trailing commas
+}
+
 function parseModelJson(raw) {
   if (raw == null) return null;
   if (typeof raw === 'object') return raw;
-  const text = String(raw);
-  // Tolerate ```json fences or surrounding prose.
+  const text = String(raw).replace(/^\uFEFF/, '');
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const body = fenced ? fenced[1] : text;
-  const start = body.indexOf('{');
-  const end = body.lastIndexOf('}');
-  if (start === -1 || end === -1) return null;
-  try { return JSON.parse(body.slice(start, end + 1)); } catch { return null; }
+  const scopes = fenced ? [fenced[1], text] : [text];
+  for (const scope of scopes) {
+    for (const candidate of jsonCandidates(scope)) {
+      try { return JSON.parse(candidate); } catch { /* try repaired */ }
+      try { return JSON.parse(repairJsonish(candidate)); } catch { /* next candidate */ }
+    }
+  }
+  return null;
 }
 
 const VALID_TYPES = new Set(['observation', 'decision', 'action']);

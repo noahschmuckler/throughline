@@ -3440,7 +3440,8 @@ function triageProvenance() {
     return `${triage.engine || 'Copilot'} decision set · ${triage.sessionId || 'unknown session'}${triage.info?.versionStale ? ' · ⚠ answers an older draft' : ''}`;
   }
   if (triage.source === 'llm') return `draft by ${triage.llm || 'model'}`;
-  return triage.llm ? `heuristic draft — ${triage.llm} failed` : 'heuristic draft (no model configured)';
+  if (triage.llm) return `heuristic draft — ${triage.llm} failed${triage.fail ? `: ${triage.fail}` : ''}`;
+  return 'heuristic draft (no model configured)';
 }
 
 async function openTriageModal(entryId) {
@@ -3496,6 +3497,7 @@ async function openTriageModal(entryId) {
     entryId,
     source: data.source || 'heuristic',
     llm: data.llm || null, // model the provider would use; null = heuristic-only config (T8)
+    fail: data.fail || null, // why the model path degraded, when it did (T20)
     clusters: (data.clusters || []).map((c, ci) => ({
       id: c.id || 'cl_' + ci,
       name: c.name || 'Cluster',

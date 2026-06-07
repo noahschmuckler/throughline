@@ -93,7 +93,9 @@ async function handleAtomizeRequest(request, env) {
     const llmCall = makeLLMCall(env);
     const result = await atomizeEntry(entry, { projects, llmCall });
     // llm = the model the provider WOULD use (null = heuristic-only config);
-    // result.source says whether it actually produced this draft (T8).
+    // result.source says whether it actually produced this draft (T8);
+    // result.fail says WHY the model path degraded, when it did (T20).
+    if (result.fail) console.warn(`[atomize] model path degraded to heuristic: ${result.fail}`);
     return json({ ...result, llm: describeLLM(env, 'reason') });
   } catch (err) {
     return json({ error: err.message }, { status: 500 });
