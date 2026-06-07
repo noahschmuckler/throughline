@@ -21,6 +21,7 @@ import { listFolder, openFile } from './lib/files.js';
 import { setupStatus, listSetupFolder, bindFolder, dbInfo } from './lib/setup.js';
 import { atomizeEntry } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
+import { consultTurn } from './shared/consult.js';
 import { makeLLMCall, describeLLM } from './shared/llm.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -117,6 +118,22 @@ async function handleClassify(req, res) {
   try {
     const result = await classifyProject(input, { llmCall });
     return sendJson(res, 200, result);
+  } catch (err) {
+    return sendJson(res, 500, { error: err.message });
+  }
+}
+
+// Native consult chat (T13): bundle + message history → one stateless
+// gpt-5.4 (tier `escalate`) turn. NO fallback — errors surface to the chat UI.
+async function handleConsult(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  let body;
+  try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+  const bundle = body?.bundle && typeof body.bundle === 'object' ? body.bundle : {};
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  try {
+    const { reply } = await consultTurn(bundle, messages, { llmCall });
+    return sendJson(res, 200, { reply, llm: describeLLM(process.env, 'escalate') });
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   }
@@ -268,6 +285,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/api/state') return await handleState(req, res);
     if (url.pathname === '/api/atomize') return await handleAtomize(req, res);
     if (url.pathname === '/api/classify') return await handleClassify(req, res);
+    if (url.pathname === '/api/consult') return await handleConsult(req, res);
     if (url.pathname === '/api/attachments') return await handleAttachmentUpload(req, res);
     if (url.pathname.startsWith('/api/attachments/')) return await serveAttachment(req, res, url.pathname);
     if (url.pathname === '/api/fs/list') return await handleFsList(req, res, url);
@@ -282,6 +300,10 @@ const server = createServer(async (req, res) => {
     return sendJson(res, 500, { error: err.message });
   }
 });
+
+// gpt-5.4 consult turns can outlast Node's 5-minute default requestTimeout
+// (gpt-mini alone took ~90 s on an 8 KB dump — T12); don't kill them mid-call.
+server.requestTimeout = 0;
 
 server.listen(PORT, HOST, () => {
   console.log(`Throughline server → http://${HOST}:${PORT}`);

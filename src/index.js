@@ -8,6 +8,7 @@
 
 import { atomizeEntry } from '../shared/atomize.js';
 import { classifyProject } from '../shared/classify.js';
+import { consultTurn } from '../shared/consult.js';
 import { makeLLMCall, describeLLM } from '../shared/llm.js';
 
 const KV_KEY = 'throughline:state';
@@ -123,6 +124,29 @@ async function handleClassifyRequest(request, env) {
   }
 }
 
+// Native consult chat (T13): bundle + message history → one stateless
+// tier-`escalate` turn. NO fallback — errors surface to the chat UI.
+async function handleConsultRequest(request, env) {
+  if (request.method !== 'POST') {
+    return json({ error: `${request.method} not allowed` }, { status: 405 });
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'invalid JSON' }, { status: 400 });
+  }
+  const bundle = body?.bundle && typeof body.bundle === 'object' ? body.bundle : {};
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  try {
+    const llmCall = makeLLMCall(env);
+    const { reply } = await consultTurn(bundle, messages, { llmCall });
+    return json({ reply, llm: describeLLM(env, 'escalate') });
+  } catch (err) {
+    return json({ error: err.message }, { status: 500 });
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -134,6 +158,9 @@ export default {
     }
     if (url.pathname === '/api/classify') {
       return handleClassifyRequest(request, env);
+    }
+    if (url.pathname === '/api/consult') {
+      return handleConsultRequest(request, env);
     }
     // Attachments are a local (Node/orange) capability — the cloud demo has no
     // file store. Keep the route present (identical contract) but say so clearly
