@@ -482,6 +482,16 @@ gate; freetext → atomize.
   Same-day follow-ups: chat markdown rendering, Settings/Profile (narrator
   identity), atomize elapsed counter + failure diagnostics + repair parser
   (T12/T14/T15/T20 — see TICKETS.md). Run critiques queued as T16–T19.
+- **v2.6 / sprint 1 "industrial ingestion" (2026-06-07): BUILT on branch
+  `industrial-ingestion`, awaiting live test.** Transport change only — the
+  gate/review/commit pipeline is untouched: atomize + consult turns become
+  machine-local server-side JOBS (survive navigation, run in parallel,
+  results land in a dashboard strip), consult transcripts persist as
+  SESSIONS, and the review overlay can flex back into the chat carrying the
+  user's manual corrections ("↩ back to chat" → revised decision set
+  re-enters review). Copilot paste path untouched. Per-type intake
+  pre-processors (email threads, meeting summaries) are a later design —
+  TICKETS T29.
 - **v3 — auto-expansion.** Only if v2 proves the round-trips are worth automating:
   Copilot requests more detail on a thin item → Throughline extracts → re-export.
   Highest complexity, least-used; deferred on purpose.
