@@ -463,8 +463,11 @@ gate; freetext → atomize.
   user-name identity (`throughline:user_name`). **Still open in v2:** the
   5.4 normalize/repair pass, SheetJS `source_ref` bounds-check, file-picker
   polish, `atom.source_ref` persistence on committed atoms.
-- **v2.5 / T13 — native consult engine (2026-06-06): CODE-COMPLETE on
-  `copilot-ingestion`.** A live acceptance run hit a hard, unexplained Copilot
+- **v2.5 / T13 — native consult engine: SHIPPED + VERIFIED LIVE 2026-06-07**
+  (full loop on orange, first-ever commit through the decisions pipeline —
+  gpt-5.4 processed the clinical-content braindump WITHOUT refusing; consult
+  quality ≈ Copilot's best; ~60 s decision set, 46 atoms, committed clean).
+  Background: a live acceptance run hit a hard, unexplained Copilot
   refusal on the decision-set prompt → **Copilot demoted to the optional
   secondary engine; the primary reasoner is gpt-5.4 via cdsapi**, in-app.
   `shared/consult.js` + `/api/consult` (both backends): stateless
@@ -476,8 +479,9 @@ gate; freetext → atomize.
   was engine-agnostic by construction). "💬 Chat about this" = native chat;
   "⬇ Export for Copilot" + 📋 Paste from Copilot = the secondary loop,
   unchanged. Mode B (OneDrive binaries) remains Copilot-only until SheetJS.
-  **Awaiting the orange live test:** does cdsapi/gpt-5.4 itself filter the
-  clinical-content braindump? (Dev box can't reach cdsapi.)
+  Same-day follow-ups: chat markdown rendering, Settings/Profile (narrator
+  identity), atomize elapsed counter + failure diagnostics + repair parser
+  (T12/T14/T15/T20 — see TICKETS.md). Run critiques queued as T16–T19.
 - **v3 — auto-expansion.** Only if v2 proves the round-trips are worth automating:
   Copilot requests more detail on a thin item → Throughline extracts → re-export.
   Highest complexity, least-used; deferred on purpose.

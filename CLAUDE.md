@@ -6,9 +6,39 @@ that aren't documented there or in the code — the deploy quirks, branch
 topology at time of writing, and patterns worth knowing before changing
 things.
 
-Snapshot date: 2026-06-01.
+Snapshot date: 2026-06-07.
 
-## CURRENT SPRINT — Copilot ingestion v2: "decisions back in" (read this first)
+## WHERE WE ARE NOW (read this first)
+
+**The ingestion epic is SHIPPED and live-verified end-to-end** (v1 consult →
+v2 decisions-back-in → T13 native gpt-5.4 engine — the two sections below).
+**Everything is on `copilot-ingestion`, NOT merged to `main`** (user review
+required before merge). Tests: 77/77 (`node --test test/`).
+
+**There is NO current sprint.** The queued work lives in **`TICKETS.md`**
+(repo root, local-only/gitignored — Noah's review file): Open tickets
+T1–T3, T5–T7, T9–T11, T16–T20; Done holds T4, T8, T12–T15 and T13. **Next
+step is a TICKETS processing session** (triage → prioritize → plan the next
+sprint). Expect it to become the **VISION.md Epic E3 planning conversation**
+— most open tickets converge there: T16 (server-side async ingestion queue),
+T17 (persistent/forkable project-scoped chats), T19 (chat-driven structural
+mutations of existing containers), T11 (components model, the keystone),
+T9 (loop-table component), T10 (kanban state editing), T18 (program_id on
+decision-set creates), T7 (triage at scale), T20 steps 3–4 (atomize
+truncation guard / 5.4 escalation — pending what the new diagnostics show).
+
+Post-T13 quick wins shipped 2026-06-07 (same branch): **chat markdown
+rendering** (T14 — escape-first `mdToHtml`, assistant bubbles only);
+**atomize elapsed counter + Cancel** (T12 — the consult-chat busy pattern in
+the triage loading state); **⚙ Settings → Profile** (T15 — header button;
+edits the localStorage narrator identity `throughline:user_name` + optional
+`throughline:user_role`, stored for future prompt seasoning); **atomize
+failure diagnostics + repair parser** (T20 steps 1+2 — `atomizeEntry` returns
+`fail` with WHY it degraded incl. truncated-JSON detection, surfaced in the
+T8 eyebrow + server warn-log; the gate's balanced-brace+repair parser is now
+also in `shared/atomize.js`'s `parseModelJson`).
+
+## SHIPPED — Copilot ingestion v2: "decisions back in"
 
 **Goal:** close the loop — braindump → atomize draft → "Chat about this" bundle
 → Copilot consult → decision-set prompt → **📋 Paste from Copilot** → gate →
@@ -22,7 +52,7 @@ project else null+warning (programs hold no atoms — the prompt tells Copilot);
 (pending containers materialize there, only if referenced); (3) paste field is
 the primary inbound channel, freetext degrades to the atomize path.
 
-**Shipped (commits 1–6 on `copilot-ingestion`, 67/67 tests green):**
+**Shipped (commits 1–6 on `copilot-ingestion`):**
 `suggested_target` in proposed{}; `DECISION_PROMPT(userName)` + one-time
 identity (`localStorage throughline:user_name`); **`public/gate.js`** (pure
 ESM, mirrors ingest.js; `test/gate.test.mjs` covers every probe-2 guardrail);
@@ -63,7 +93,7 @@ Copilot demotes to an OPTIONAL path (still the only reader of OneDrive
 binaries until SheetJS lands); the primary reasoner is **gpt-5.4 via cdsapi**.
 Plan file: `~/.claude/plans/abundant-honking-noodle.md`.
 
-**Shipped (commits 7–9 on `copilot-ingestion`, 75/75 tests green):**
+**Shipped on `copilot-ingestion` (tests green — 77/77 after the T20 additions):**
 - **`shared/consult.js`** — `buildConsultPrompt(bundle, messages)` serializes
   the bundle + FULL turn history into one prompt per round (cdsapi
   `single_response` is stateless); `consultTurn` calls
@@ -120,18 +150,13 @@ the decisions pipeline.** gpt-5.4 processed the real opioid-content braindump
   worked as designed**.
 - Para-verified: elapsed counter appreciated ("doesn't seem hung").
 
-**Gaps found in the run (now tickets — see TICKETS.md):** chat shows raw
-markdown as plain text (T14); narrator name stuck as "Noah" in localStorage
-`throughline:user_name`, no settings UI (T15 — NB it's localStorage, NOT
-.env); atomize popup needs the same elapsed counter (T12 update) and Noah
-wants ingestion server-side + an async results queue so runs survive
-navigation and parallelize (T16); persistent/forkable project-scoped chat
-sessions (T17); decision-set creates can't set `program_id` — the new
-container landed outside its program (T18); no mutations of EXISTING
-containers from chat — framework switch, regrouping, dashboard-level
-consolidation review via approved modification JSON (T19, the E3 family);
-gpt-mini atomize keeps failing on the 8 KB dump → consider tier-escalation
-fallback before heuristic (T20).
+**Gaps found in the run became tickets:** T14/T15 + the T12 counter were
+fixed same-day (see "WHERE WE ARE NOW" above); T16–T20 remain open in
+TICKETS.md — async ingestion queue, persistent/forkable chats, `program_id`
+on decision-set creates (the new container landed outside its program),
+chat-driven mutations of existing containers (E3 family), and the gpt-mini
+failure investigation (steps 1+2 of which — diagnostics + repair parser —
+are also already shipped).
 
 Next: sprint retro → TICKETS processing session (T14–T20 above + T7/T9/T10/
 T11/T12/T16) → VISION.md E3 sequence. Deferred from this sprint: transcript
@@ -207,8 +232,12 @@ deferred V1+ backlog lives in `BUILDPATH.md` §H.)
   folder-lens + onboarding) plus the Copilot-ingestion design docs. **There is
   no Cloudflare deploy** — pushing `main` deploys nothing (see Deployment model).
 - `copilot-ingestion` (origin, **the active dev branch**) — branched off `main`.
-  The **Copilot-assisted ingestion** epic. **v1 (read-only consult) is shipped +
-  pushed, NOT merged** — see the "Copilot-assisted ingestion" section below.
+  The **ingestion epic, complete and live-verified**: v1 (read-only consult) +
+  v2 (decisions back in: gate + decisions-mode review) + **T13 (native gpt-5.4
+  consult engine — the primary; Copilot demoted to secondary)** + the post-T13
+  quick wins (chat markdown, Settings/Profile, atomize counter + failure
+  diagnostics). **Pushed, NOT merged** — see "WHERE WE ARE NOW" at the top and
+  the "Copilot-assisted ingestion" section below.
 
 Each branch stacks on the previous. Verify what a branch actually adds
 with `git log <parent>..HEAD --oneline` before reading the diff.
@@ -419,12 +448,13 @@ is a **field-normalizer + JSON-repair**, not the reasoner. **SheetJS is DECIDED:
 vendored into the bundle (pure JS, no separate install on orange) for `source_ref`
 bounds-checking — but only needed at v2.
 
-**Phasing (spec §8): v1 read-only consult → v2 decisions-back-in + gate + SheetJS →
-v3 auto-expansion.**
+**Phasing (spec §8): v1 read-only consult → v2 decisions-back-in + gate →
+v2.5/T13 native engine → v3 auto-expansion. SheetJS still pending.**
 
 **STATUS — v1 SHIPPED + verified live; v2 CORE SHIPPED; T13 (native gpt-5.4
-consult engine — Copilot demoted to secondary) CODE-COMPLETE (see the T13
-block at the top of this file), tests green (75/75), NOT merged.** What v1 added:
+consult engine — Copilot demoted to secondary) SHIPPED + VERIFIED LIVE
+2026-06-07 (see the T13 block at the top of this file), tests green (77/77),
+NOT merged.** What v1 added:
 - **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
   imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
   `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
