@@ -18,17 +18,19 @@ back-to-program, engine-name header, T20 diagnostics) were merged **without
 an orange retest** — verify them on the next orange run. Tests: 79/79
 (`node --test test/`).
 
-**There is NO current sprint.** The queued work lives in **`TICKETS.md`**
-(repo root, local-only/gitignored — Noah's review file): Open tickets
-T1–T3, T5–T7, T9–T11, T16–T20; Done holds T4, T8, T12–T15 and T13. **Next
-step is a TICKETS processing session** (triage → prioritize → plan the next
-sprint). Expect it to become the **VISION.md Epic E3 planning conversation**
-— most open tickets converge there: T16 (server-side async ingestion queue),
-T17 (persistent/forkable project-scoped chats), T19 (chat-driven structural
-mutations of existing containers), T11 (components model, the keystone),
-T9 (loop-table component), T10 (kanban state editing), T18 (program_id on
-decision-set creates), T7 (triage at scale), T20 steps 3–4 (atomize
-truncation guard / 5.4 escalation — pending what the new diagnostics show).
+**CURRENT SPRINT (processed 2026-06-07) — SPRINT 1: "industrial ingestion".**
+The processing session ran; results live in `TICKETS.md` "Triaged / planned"
+(full priorities + approaches there). Sprint 1 contents: **T16** server-side
+async ingestion + results inbox queue (core, design-first), **T26**
+chat↔review flexing (consult session survives the decision-set→review
+transition), **T20 steps 3–4** (retry on empty reply + a config flag to skip
+the heuristic fallback on big dumps — A/B the 5.4 "fix this mess" hypothesis
+during real orange work), **T22** next-action queue, plus riders **T18**
+(program_id on decision-set creates), **T10** (kanban states edit UI),
+**T1+T2** (state-write hardening). **Sprint 2 = the E3 design conversation**
+(VISION.md first: T11 keystone, T9/T19 inside, T17 after T26). T27 stage 1
+floats; T3/T5-rest/T6/T7 parked (T7 pending the T20 experiment). **Sprint 1
+work goes on a NEW branch off `main`** (e.g. `industrial-ingestion`).
 
 Post-T13 quick wins shipped 2026-06-07 (same branch): **chat markdown
 rendering** (T14 — escape-first `mdToHtml`, assistant bubbles only);
