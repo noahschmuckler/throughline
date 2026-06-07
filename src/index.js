@@ -129,6 +129,11 @@ async function handleClassifyRequest(request, env) {
 // Native consult chat (T13): bundle + message history → one stateless
 // tier-`escalate` turn. NO fallback — errors surface to the chat UI.
 async function handleConsultRequest(request, env) {
+  // GET = engine info only (T25): lets the chat header name the model before
+  // the first reply. Provider-agnostic — whatever the escalate tier maps to.
+  if (request.method === 'GET') {
+    return json({ llm: describeLLM(env, 'escalate') });
+  }
   if (request.method !== 'POST') {
     return json({ error: `${request.method} not allowed` }, { status: 405 });
   }

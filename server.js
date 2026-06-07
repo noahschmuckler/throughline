@@ -128,6 +128,9 @@ async function handleClassify(req, res) {
 // Native consult chat (T13): bundle + message history → one stateless
 // gpt-5.4 (tier `escalate`) turn. NO fallback — errors surface to the chat UI.
 async function handleConsult(req, res) {
+  // GET = engine info only (T25): lets the chat header name the model before
+  // the first reply. Provider-agnostic — whatever the escalate tier maps to.
+  if (req.method === 'GET') return sendJson(res, 200, { llm: describeLLM(process.env, 'escalate') });
   if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
   let body;
   try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }

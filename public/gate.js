@@ -320,6 +320,33 @@ export function resolveDecisions(bundle, decisions, { state = null, userName = '
   }
   if (userNameMissing) warn('no_user_name', 'Some owners are "narrator"-style placeholders and no user name is set — fix the owners after commit, or set your name.');
 
+  // ---- dedup (T21): collapse UNDECLARED duplicates -------------------
+  // A messy draft can leak near-identical atoms straight through the model's
+  // decision set (live run 2: one observation arrived in quadruplicate).
+  // Distinct from merge_into (the model DECLARING a merge, handled above):
+  // this catches what it missed. Same type + same target + same normalized
+  // body → keep the first, drop the rest, warn. Empty bodies never collapse.
+  const normBody = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const seenAtom = new Set();
+  const dupIds = [];
+  const dedupedAtoms = atoms.filter(a => {
+    const nb = normBody(a.body);
+    if (!nb) return true;
+    const k = `${a.type}|${a.target ?? ''}|${nb}`;
+    if (seenAtom.has(k)) {
+      dupIds.push(a._srcId);
+      dropped.push({ id: a._srcId, body: a.body, note: 'duplicate — collapsed into an identical atom with the same target' });
+      return false;
+    }
+    seenAtom.add(k);
+    return true;
+  });
+  if (dupIds.length) {
+    warn('duplicates_collapsed',
+      `${dupIds.length} duplicate atom${dupIds.length > 1 ? 's' : ''} collapsed (identical type, body, and target) — the model emitted them more than once.`,
+      dupIds);
+  }
+
   // ---- coverage (§4D softened: warn, never abort — the human decides) --
   const allA = (proposed.atoms || []).map(a => a.id);
   const unaddressed = allA.filter(id => !res.has(id)).map(id => {
@@ -334,7 +361,7 @@ export function resolveDecisions(bundle, decisions, { state = null, userName = '
   }
 
   return {
-    atoms, containerCreates, warnings, dropped, unaddressed,
+    atoms: dedupedAtoms, containerCreates, warnings, dropped, unaddressed,
     info: {
       sessionId: bundle.session_id || null,
       versionHash: bundle.version_hash || null,

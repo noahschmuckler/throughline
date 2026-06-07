@@ -1413,6 +1413,13 @@ function renderContainer(main, c) {
 
   const backLink = main.querySelector('#project-back-link');
   if (backLink && c.type === 'inbox') backLink.textContent = '← Home';
+  // A project/reference inside a program lives UNDER it (its tile is hidden
+  // from home) — back goes to the program, not the dashboard (T23).
+  const parentProg = c.program_id ? getContainer(c.program_id) : null;
+  if (backLink && parentProg && parentProg.type === 'program') {
+    backLink.href = `#/c/${encodeURIComponent(parentProg.id)}`;
+    backLink.textContent = `← ${parentProg.title || 'Program'}`;
+  }
 
   const tagline = main.querySelector('#project-tagline');
   if (c.goal_or_purpose) tagline.textContent = c.goal_or_purpose;
@@ -2211,11 +2218,31 @@ function renderDrawerInner(entryId) {
   };
 }
 
+// Group projects under their parent program for <optgroup> pickers (T24) —
+// a dozen projects across several programs is unscannable as one flat list.
+// Returns [{label, items}] in program-title order; standalone projects last.
+function groupProjectsByProgram(projs) {
+  const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '');
+  const programs = state.containers
+    .filter(c => c.type === 'program' && c.status !== 'archived')
+    .sort(byTitle);
+  const groups = [];
+  const used = new Set();
+  for (const g of programs) {
+    const kids = projs.filter(p => p.program_id === g.id).sort(byTitle);
+    if (!kids.length) continue;
+    kids.forEach(k => used.add(k.id));
+    groups.push({ label: g.title || 'Program', items: kids });
+  }
+  const rest = projs.filter(p => !used.has(p.id)).sort(byTitle);
+  if (rest.length) groups.push({ label: groups.length ? 'Projects — no program' : 'Projects', items: rest });
+  return groups;
+}
+
 function renderContainerPickerOptions(selectedId) {
   const projects   = state.containers.filter(c => c.type === 'project'        && c.status !== 'archived');
   const references = state.containers.filter(c => c.type === 'reference_file' && c.status !== 'archived');
   const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '');
-  projects.sort(byTitle);
   references.sort(byTitle);
 
   const opt = (id, label) =>
@@ -2225,7 +2252,8 @@ function renderContainerPickerOptions(selectedId) {
     <optgroup label="Inbox">
       ${opt(INBOX_ID, 'Inbox')}
     </optgroup>
-    ${projects.length ? `<optgroup label="Projects">${projects.map(c => opt(c.id, c.title)).join('')}</optgroup>` : ''}
+    ${groupProjectsByProgram(projects).map(g =>
+      `<optgroup label="${escHtml(g.label)}">${g.items.map(c => opt(c.id, c.title)).join('')}</optgroup>`).join('')}
     ${references.length ? `<optgroup label="Reference files">${references.map(c => opt(c.id, c.title)).join('')}</optgroup>` : ''}
   `;
 }
@@ -3531,9 +3559,9 @@ function renderTriage() {
 
   const optionsFor = (cur) => {
     let opts = `<option value="__none__"${!cur ? ' selected' : ''}>— Unassigned —</option>`;
-    if (projs.length) {
-      opts += `<optgroup label="Projects">`;
-      for (const p of projs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
+    for (const g of groupProjectsByProgram(projs)) {
+      opts += `<optgroup label="${escHtml(g.label)}">`;
+      for (const p of g.items) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
       opts += `</optgroup>`;
     }
     if (refs.length) {
@@ -4100,6 +4128,11 @@ async function openConsultChat() {
   const shroud = document.getElementById('chat-shroud');
   shroud.hidden = false;
   renderConsultChat();
+  // Name the engine in the header from the start (T25) — don't wait for the
+  // first reply. Reply-time `llm` still wins (it reflects what actually ran).
+  fetch('/api/consult').then(r => r.json()).then(d => {
+    if (chat && !chat.llm && d.llm) { chat.llm = d.llm; renderConsultChat(); }
+  }).catch(() => { /* header just says "native model" until a reply */ });
   // Seed turn 1 with the opening ask so the model engages with the bundle's
   // _instructions immediately (the first live Copilot consult showed a bare
   // "does this look right?" gets a JSON-format critique instead).
@@ -4394,10 +4427,13 @@ function openDecisionsReview(stash, decisions, { engine = null } = {}) {
   const clusters = keys.map((t, ci) => {
     const pendingC = t !== '__none__' ? plan.containerCreates.find(c => c.pid === t) : null;
     const real = (t !== '__none__' && !pendingC) ? getContainer(t) : null;
+    // Cross-program misfiles hide behind a good project NAME (T21) — when the
+    // target lives inside a program, say which one so provenance is reviewable.
+    const realProg = real && real.program_id ? getContainer(real.program_id) : null;
     const name = t === '__none__' ? '⚠ Unassigned / needs attention'
       : pendingC ? `${pendingC.title} (new ${pendingC.kind === 'project' ? 'project' : 'reference'})`
         : t === 'inbox' ? 'Inbox'
-          : (real ? real.title : t);
+          : (real ? `${real.title}${realProg ? ` · in program: ${realProg.title}` : ''}` : t);
     const projectId = t === '__none__' ? null
       : pendingC ? `__pending__:${t}`
         : t === 'inbox' ? '__inbox__'

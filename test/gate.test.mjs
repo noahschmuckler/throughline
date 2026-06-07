@@ -324,3 +324,34 @@ test('parseDecisionSet agrees with shared/atomize parseModelJson behavior', asyn
   assert.equal(viaAtomize.source, 'llm', 'shared parser extracted the fenced JSON');
   assert.deepEqual(parseDecisionSet(fenced), JSON.parse(fenced.replace(/```(json)?\n?/g, '')), 'gate parser extracts the same');
 });
+
+// ---- T21: undeclared-duplicate collapse --------------------------------
+
+test('dedup (T21): undeclared duplicate atoms collapse with a warning + dropped entries', () => {
+  const decisions = {
+    _meta: { session_id: 'ing_2026-06-07_0900', version_hash: 'tl_fixture1' },
+    n1: { verb: 'create', kind: 'observation', body: 'CMS denied the waiver.', target: 'proj_a' },
+    n2: { verb: 'create', kind: 'observation', body: 'CMS denied the waiver!', target: 'proj_a' }, // punctuation variant → dup
+    n3: { verb: 'create', kind: 'observation', body: 'cms  DENIED the waiver', target: 'proj_a' }, // case/whitespace variant → dup
+    n4: { verb: 'create', kind: 'observation', body: 'CMS denied the waiver.', target: 'ref_b' },  // different target → kept
+    n5: { verb: 'create', kind: 'action', body: 'CMS denied the waiver.', target: 'proj_a' },      // different type → kept
+  };
+  const plan = resolveDecisions(bundle(), decisions, OPTS);
+  const matching = plan.atoms.filter(a => /cms.*denied/i.test(a.body));
+  assert.equal(matching.length, 3, 'quadruplicate collapses to 1 + the two legit variants');
+  assert.ok(codes(plan).includes('duplicates_collapsed'));
+  const dupDropped = plan.dropped.filter(d => /duplicate/.test(d.note || ''));
+  assert.equal(dupDropped.length, 2);
+  assert.ok(['n2', 'n3'].every(id => dupDropped.some(d => d.id === id)));
+});
+
+test('dedup (T21): empty bodies never collapse into each other', () => {
+  const decisions = {
+    _meta: { session_id: 'ing_2026-06-07_0900', version_hash: 'tl_fixture1' },
+    a1: { verb: 'accept' },
+    a4: { verb: 'accept' },
+  };
+  const plan = resolveDecisions(bundle(), decisions, OPTS);
+  // a1 and a4 have distinct bodies in the fixture; sanity: nothing collapsed.
+  assert.ok(!codes(plan).includes('duplicates_collapsed'));
+});

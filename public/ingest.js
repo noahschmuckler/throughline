@@ -59,7 +59,10 @@ export function DECISION_PROMPT(userName) {
     'only), "assigned_to", "due_date" (YYYY-MM-DD), "source_ref" (quote the raw_dump line that grounds ' +
     'it), "note" (one line of reasoning), "confidence" (0.0–1.0). RULES: programs cannot hold atoms — ' +
     'never set target to a type:"program" container; file into a project or reference file within ' +
-    `that program, creating one if needed. The user is ${name} — attribute first-person commitments ` +
+    'that program, creating one if needed. Never emit the same atom twice — one verdict per distinct ' +
+    'fact/decision/action; before filing into an existing project, check its program_id in ' +
+    "state_summary so you don't route work into a project whose parent program is unrelated. " +
+    `The user is ${name} — attribute first-person commitments ` +
     `("I'll…", "my…") to ${name}, never to a placeholder like "narrator". Include a "_meta" object ` +
     "echoing the bundle's version_hash and session_id verbatim so the import can confirm you answered " +
     'against the current draft.'
