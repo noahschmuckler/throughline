@@ -4,6 +4,12 @@
 // Ports to a Node + JSON-file backend by swapping the API URL only.
 // ------------------------------------------------------------------
 
+import {
+  buildStateSummary, buildProposed, buildNeedsClarification,
+  assembleBundle, openActionsForContainer, OPENING_PROMPT, DECISION_PROMPT,
+} from './ingest.js';
+import { parseDecisionSet, isBundle, isDecisionSet, looksLikeJson, resolveDecisions } from './gate.js';
+
 const STATE_URL = '/api/state';
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -162,6 +168,57 @@ function escHtml(s) {
   }[c]));
 }
 
+// Minimal markdown → HTML for consult-chat assistant bubbles (T14). Escape-
+// first by construction (everything passes through escHtml before any tag is
+// emitted), so model output can never inject markup. Covers what gpt-5.4
+// actually sends: headings, bold/italic, inline + fenced code, lists, rules.
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+}
+function mdToHtml(src) {
+  const lines = escHtml(src).split(/\r?\n/);
+  const out = [];
+  let list = null;   // 'ul' | 'ol' currently open
+  let para = [];     // pending paragraph lines
+  let code = null;   // lines inside an open ``` fence
+  const flushPara = () => { if (para.length) { out.push(`<p>${mdInline(para.join('<br>'))}</p>`); para = []; } };
+  const flushList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of lines) {
+    if (code !== null) {
+      if (/^```/.test(line.trim())) { out.push(`<pre><code>${code.join('\n')}</code></pre>`); code = null; }
+      else code.push(line);
+      continue;
+    }
+    const t = line.trim();
+    if (/^```/.test(t)) { flushPara(); flushList(); code = []; continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { flushPara(); flushList(); out.push('<hr>'); continue; }
+    const h = t.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushPara(); flushList();
+      const n = Math.min(h[1].length + 2, 6); // bubble-sized: # → h3, ## → h4 …
+      out.push(`<h${n}>${mdInline(h[2])}</h${n}>`);
+      continue;
+    }
+    const ul = t.match(/^[-*•]\s+(.*)$/);
+    const ol = t.match(/^\d+[.)]\s+(.*)$/);
+    if (ul || ol) {
+      flushPara();
+      const want = ul ? 'ul' : 'ol';
+      if (list !== want) { flushList(); out.push(`<${want}>`); list = want; }
+      out.push(`<li>${mdInline((ul || ol)[1])}</li>`);
+      continue;
+    }
+    if (!t) { flushPara(); flushList(); continue; }
+    para.push(t);
+  }
+  if (code) out.push(`<pre><code>${code.join('\n')}</code></pre>`); // unclosed fence
+  flushPara(); flushList();
+  return out.join('');
+}
+
 function tmpl(id) {
   return document.getElementById(id).content.cloneNode(true);
 }
@@ -265,13 +322,10 @@ function atomsOfContainer(cid) {
   return state.atoms.filter(a => ids.has(a.entry_id));
 }
 
+// Open actions in a container = action atoms with no closing outcome.
+// Delegates to shared/ingest so the UI and the export bundle use one rule.
 function openActionsOf(cid) {
-  const atoms = atomsOfContainer(cid);
-  const actions = atoms.filter(a => a.kind === 'action');
-  const closed = new Set(
-    atoms.filter(a => a.kind === 'outcome' && a.parent_atom_id).map(a => a.parent_atom_id)
-  );
-  return actions.filter(a => !closed.has(a.id));
+  return openActionsForContainer(state, cid);
 }
 
 // First outcome atom (if any) that closes this action.
@@ -551,6 +605,8 @@ function renderHome(main) {
     () => openAdHocEntryDrawer();
   main.querySelector('[data-act="import-file"]').onclick =
     () => openFileImport();
+  main.querySelector('[data-act="paste-copilot"]').onclick =
+    () => openCopilotImport();
 
   // Drag-and-drop a Markdown/text file anywhere on the dashboard → ingest it.
   const section = main.querySelector('.home');
@@ -1357,6 +1413,13 @@ function renderContainer(main, c) {
 
   const backLink = main.querySelector('#project-back-link');
   if (backLink && c.type === 'inbox') backLink.textContent = '← Home';
+  // A project/reference inside a program lives UNDER it (its tile is hidden
+  // from home) — back goes to the program, not the dashboard (T23).
+  const parentProg = c.program_id ? getContainer(c.program_id) : null;
+  if (backLink && parentProg && parentProg.type === 'program') {
+    backLink.href = `#/c/${encodeURIComponent(parentProg.id)}`;
+    backLink.textContent = `← ${parentProg.title || 'Program'}`;
+  }
 
   const tagline = main.querySelector('#project-tagline');
   if (c.goal_or_purpose) tagline.textContent = c.goal_or_purpose;
@@ -1973,28 +2036,37 @@ function titleFromMarkdown(text, filename) {
   return (filename || 'Imported note').replace(/\.[^.]+$/, '');
 }
 
+// Core text intake: any raw text → an Inbox entry, one click from Atomize.
+// Shared by file import, the Paste-from-Copilot freetext path, and the
+// decisions-review stale-entry fallback.
+function importText(text, { title, kind = 'freetext', open = true } = {}) {
+  const inbox = getOrCreateInbox();
+  const e = {
+    id: uid(),
+    container_id: inbox.id,
+    kind,
+    occurred_at: nowIso(),
+    title: title || titleFromMarkdown(text, 'Imported note'),
+    participants: [],
+    tags: [],
+    notes: text,
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  };
+  state.entries.push(e);
+  scheduleSave();
+  // Land in the drawer with notes pre-filled — one click from "Atomize notes".
+  if (open) openEntryDrawer(inbox.id, e.id);
+  return e;
+}
+
 function importTextFile(file) {
   const reader = new FileReader();
   reader.onerror = () => alert('Could not read that file.');
   reader.onload = () => {
     const text = String(reader.result || '');
-    const inbox = getOrCreateInbox();
-    const e = {
-      id: uid(),
-      container_id: inbox.id,
-      kind: 'meeting',          // .loop summaries are meeting recaps
-      occurred_at: nowIso(),
-      title: titleFromMarkdown(text, file.name),
-      participants: [],
-      tags: [],
-      notes: text,
-      created_at: nowIso(),
-      updated_at: nowIso(),
-    };
-    state.entries.push(e);
-    scheduleSave();
-    // Land in the drawer with notes pre-filled — one click from "Atomize notes".
-    openEntryDrawer(inbox.id, e.id);
+    // kind 'meeting': imported files are typically .loop/meeting recaps.
+    importText(text, { title: titleFromMarkdown(text, file.name), kind: 'meeting' });
   };
   reader.readAsText(file);
 }
@@ -2146,11 +2218,31 @@ function renderDrawerInner(entryId) {
   };
 }
 
+// Group projects under their parent program for <optgroup> pickers (T24) —
+// a dozen projects across several programs is unscannable as one flat list.
+// Returns [{label, items}] in program-title order; standalone projects last.
+function groupProjectsByProgram(projs) {
+  const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '');
+  const programs = state.containers
+    .filter(c => c.type === 'program' && c.status !== 'archived')
+    .sort(byTitle);
+  const groups = [];
+  const used = new Set();
+  for (const g of programs) {
+    const kids = projs.filter(p => p.program_id === g.id).sort(byTitle);
+    if (!kids.length) continue;
+    kids.forEach(k => used.add(k.id));
+    groups.push({ label: g.title || 'Program', items: kids });
+  }
+  const rest = projs.filter(p => !used.has(p.id)).sort(byTitle);
+  if (rest.length) groups.push({ label: groups.length ? 'Projects — no program' : 'Projects', items: rest });
+  return groups;
+}
+
 function renderContainerPickerOptions(selectedId) {
   const projects   = state.containers.filter(c => c.type === 'project'        && c.status !== 'archived');
   const references = state.containers.filter(c => c.type === 'reference_file' && c.status !== 'archived');
   const byTitle = (a, b) => (a.title || '').localeCompare(b.title || '');
-  projects.sort(byTitle);
   references.sort(byTitle);
 
   const opt = (id, label) =>
@@ -2160,7 +2252,8 @@ function renderContainerPickerOptions(selectedId) {
     <optgroup label="Inbox">
       ${opt(INBOX_ID, 'Inbox')}
     </optgroup>
-    ${projects.length ? `<optgroup label="Projects">${projects.map(c => opt(c.id, c.title)).join('')}</optgroup>` : ''}
+    ${groupProjectsByProgram(projects).map(g =>
+      `<optgroup label="${escHtml(g.label)}">${g.items.map(c => opt(c.id, c.title)).join('')}</optgroup>`).join('')}
     ${references.length ? `<optgroup label="Reference files">${references.map(c => opt(c.id, c.title)).join('')}</optgroup>` : ''}
   `;
 }
@@ -3367,6 +3460,18 @@ function triageTotals() {
   return { total, assigned };
 }
 
+// Who produced this draft (T8). Three states: the model ran; the model was
+// configured but degraded to the heuristic (the previously-invisible case);
+// no model configured at all. Decisions mode (v2) names the session instead.
+function triageProvenance() {
+  if (triage.mode === 'decisions') {
+    return `${triage.engine || 'Copilot'} decision set · ${triage.sessionId || 'unknown session'}${triage.info?.versionStale ? ' · ⚠ answers an older draft' : ''}`;
+  }
+  if (triage.source === 'llm') return `draft by ${triage.llm || 'model'}`;
+  if (triage.llm) return `heuristic draft — ${triage.llm} failed${triage.fail ? `: ${triage.fail}` : ''}`;
+  return 'heuristic draft (no model configured)';
+}
+
 async function openTriageModal(entryId) {
   const entry = state.entries.find(e => e.id === entryId);
   if (!entry) return;
@@ -3379,7 +3484,18 @@ async function openTriageModal(entryId) {
   const panel = document.getElementById('triage');
   shroud.hidden = false;
   shroud.onclick = (ev) => { if (ev.target === shroud) closeTriage(); };
-  panel.innerHTML = `<div class="triage-loading">Atomizing notes…</div>`;
+  // T12: model runs on a big entry can take a minute+ — show a live elapsed
+  // counter + Cancel (same pattern as the consult chat) instead of freezing.
+  panel.innerHTML = `<div class="triage-loading">Atomizing notes… <span id="atomize-elapsed">0</span>s
+    <div class="muted small" style="margin-top:6px">Model runs can take a minute or two on large entries.</div>
+    <button class="btn" data-act="t-cancel" style="margin-top:10px">Cancel</button></div>`;
+  const abort = new AbortController();
+  const ticker = setInterval(() => {
+    const el = document.getElementById('atomize-elapsed');
+    if (el) el.textContent = String(Number(el.textContent) + 1);
+    else clearInterval(ticker); // overlay replaced/closed
+  }, 1000);
+  panel.querySelector('[data-act="t-cancel"]').onclick = () => abort.abort();
 
   const projList = projects().map(p => ({ id: p.id, title: p.title, tags: p.tags || [], goal_or_purpose: p.goal_or_purpose || '' }));
 
@@ -3392,18 +3508,24 @@ async function openTriageModal(entryId) {
         entry: { title: entry.title, notes: entry.notes, occurred_at: entry.occurred_at, participants: entry.participants || [] },
         projects: projList,
       }),
+      signal: abort.signal,
     });
     if (!r.ok) throw new Error(`atomize ${r.status}`);
     data = await r.json();
   } catch (err) {
+    clearInterval(ticker);
+    if (err.name === 'AbortError') { closeTriage(); return; } // user cancelled
     panel.innerHTML = `<div class="triage-loading">Atomize failed: ${escHtml(err.message)}<br/><button class="btn" data-act="t-close">Close</button></div>`;
     panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
     return;
   }
+  clearInterval(ticker);
 
   triage = {
     entryId,
     source: data.source || 'heuristic',
+    llm: data.llm || null, // model the provider would use; null = heuristic-only config (T8)
+    fail: data.fail || null, // why the model path degraded, when it did (T20)
     clusters: (data.clusters || []).map((c, ci) => ({
       id: c.id || 'cl_' + ci,
       name: c.name || 'Cluster',
@@ -3414,6 +3536,7 @@ async function openTriageModal(entryId) {
     })),
     expanded: {},
     newForm: {},
+    createdIds: [], // containers created during THIS triage (→ proposed{} in the export bundle)
   };
   renderTriage();
 }
@@ -3436,14 +3559,24 @@ function renderTriage() {
 
   const optionsFor = (cur) => {
     let opts = `<option value="__none__"${!cur ? ' selected' : ''}>— Unassigned —</option>`;
-    if (projs.length) {
-      opts += `<optgroup label="Projects">`;
-      for (const p of projs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
+    for (const g of groupProjectsByProgram(projs)) {
+      opts += `<optgroup label="${escHtml(g.label)}">`;
+      for (const p of g.items) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
       opts += `</optgroup>`;
     }
     if (refs.length) {
       opts += `<optgroup label="Reference files">`;
       for (const p of refs) opts += `<option value="${escHtml(p.id)}"${cur === p.id ? ' selected' : ''}>${escHtml(p.title)}</option>`;
+      opts += `</optgroup>`;
+    }
+    // Decisions mode (v2): Copilot's proposed new containers as commit-time
+    // placeholders — selectable now, created only when the user commits.
+    if (triage.mode === 'decisions' && (triage.pendingCreates || []).length) {
+      opts += `<optgroup label="New — created on commit">`;
+      for (const pc of triage.pendingCreates) {
+        const v = `__pending__:${pc.pid}`;
+        opts += `<option value="${escHtml(v)}"${cur === v ? ' selected' : ''}>+ ${escHtml(pc.title)} (${pc.kind === 'project' ? 'project' : 'reference'})</option>`;
+      }
       opts += `</optgroup>`;
     }
     opts += `<option value="__new__">+ New project…</option>`;
@@ -3464,9 +3597,12 @@ function renderTriage() {
     let badge = '';
     if (same && targets[0] === '__inbox__') badge = `<span class="t-suggest">→ Inbox</span>`;
     else if (assignedC) badge = `<span class="t-assigned" style="background:${projectColor(assignedC)}">✓ ${escHtml(assignedC.title)}</span>`;
+    else if (same && String(targets[0]).startsWith('__pending__:')) badge = `<span class="t-suggest">＋ new container on commit</span>`;
     else if (allAssigned) badge = `<span class="t-suggest">split across projects</span>`;
     else if (!c.suggestedId) badge = `<span class="t-orphan">⚠ no matching project</span>`;
-    else { const s = getContainer(c.suggestedId); badge = s ? `<span class="t-suggest" style="color:${projectColor(s)}">AI suggests: ${escHtml(s.title)}</span>` : ''; }
+    // "AI suggests" only when a model actually produced the draft — a heuristic
+    // keyword match labeled as AI was indistinguishable from a real run (T8).
+    else { const s = getContainer(c.suggestedId); badge = s ? `<span class="t-suggest" style="color:${projectColor(s)}">${triage.source === 'llm' ? 'AI suggests' : 'keyword match'}: ${escHtml(s.title)}</span>` : ''; }
 
     const pills = [];
     if (counts.obs) pills.push(`<span class="t-pill o">OBS ${counts.obs}</span>`);
@@ -3527,10 +3663,25 @@ function renderTriage() {
   const projChips = projs.map(p => chipHtml(p, countTarget(p))).join('');
   const refChips = refs.map(p => [p, countTarget(p)]).filter(([, n]) => n).map(([p, n]) => chipHtml(p, n)).join('');
 
+  // Decisions mode (v2): the gate's warnings + what Copilot dropped or never
+  // addressed — visible, never silently lost (the raw dump keeps everything).
+  let extras = '';
+  if (triage.mode === 'decisions') {
+    const warns = triage.warnings || [];
+    const drops = triage.dropped || [];
+    const unaddr = triage.unaddressed || [];
+    extras =
+      (warns.length ? `<div class="t-warnings">${warns.map(w => `<div class="t-warning">⚠ ${escHtml(w.msg)}</div>`).join('')}</div>` : '') +
+      ((drops.length || unaddr.length) ? `<div class="t-dropped">
+        ${drops.length ? `<details><summary>Dropped by Copilot (${drops.length})</summary>${drops.map(d => `<div class="t-dropped-item">${escHtml(d.body)}${d.note ? ` <span class="muted">— ${escHtml(d.note)}</span>` : ''}</div>`).join('')}</details>` : ''}
+        ${unaddr.length ? `<details><summary>Not addressed by Copilot (${unaddr.length}) — kept only in the entry notes</summary>${unaddr.map(d => `<div class="t-dropped-item">${escHtml(d.body)}</div>`).join('')}</details>` : ''}
+      </div>` : '');
+  }
+
   panel.innerHTML = `
     <div class="t-header">
       <div>
-        <div class="t-eyebrow">Throughline · Entry triage${triage.source === 'heuristic' ? ' · heuristic' : ' · AI'}</div>
+        <div class="t-eyebrow">Throughline · ${triage.mode === 'decisions' ? 'Decision review' : 'Entry triage'} · ${escHtml(triageProvenance())}</div>
         <div class="t-title">${escHtml(entry.title || '(untitled)')}</div>
         <div class="t-sub">${fmtDate(entry.occurred_at)}${(entry.participants || []).length ? ' · ' + escHtml(entry.participants.join(', ')) : ''}</div>
       </div>
@@ -3540,6 +3691,7 @@ function renderTriage() {
         <button class="triage-close" aria-label="Close">×</button>
       </div>
     </div>
+    ${extras}
     <div class="t-body">
       <div class="t-clusters">${clustersHTML || '<div class="empty muted">Nothing to atomize.</div>'}</div>
       <div class="t-sidebar">
@@ -3549,6 +3701,10 @@ function renderTriage() {
         <div class="t-commit">
           <button class="btn primary ${done ? 'ready' : ''}" data-act="t-commit">${done ? '✓ Commit entry' : 'Commit entry →'}</button>
           ${total - assigned ? `<div class="t-commit-hint">${total - assigned} unassigned → stay on this entry</div>` : ''}
+          <button class="btn t-chat-btn" data-act="t-consult">💬 Chat about this</button>
+          <div class="t-commit-hint">Native consult — read-only, files nothing.</div>
+          <button class="btn t-chat-btn" data-act="t-export">⬇ Export for Copilot</button>
+          <div class="t-commit-hint">Secondary engine — bundle file + paste loop.</div>
         </div>
       </div>
     </div>`;
@@ -3560,6 +3716,8 @@ function wireTriage() {
   const panel = document.getElementById('triage');
   panel.querySelector('.triage-close')?.addEventListener('click', closeTriage);
   panel.querySelector('[data-act="t-commit"]')?.addEventListener('click', commitTriage);
+  panel.querySelector('[data-act="t-consult"]')?.addEventListener('click', openConsultChat);
+  panel.querySelector('[data-act="t-export"]')?.addEventListener('click', chatAboutThis);
 
   panel.querySelectorAll('[data-ttoggle]').forEach(el => {
     el.addEventListener('click', (ev) => {
@@ -3632,6 +3790,7 @@ function triageCreateContainer(clusterId, title) {
     tags: [], status: 'active', created_at: nowIso(), updated_at: nowIso(),
   };
   state.containers.push(c);
+  if (triage && !triage.createdIds.includes(id)) triage.createdIds.push(id);
   scheduleSave();
   delete triage.newForm[clusterId];
   assignTriageCluster(clusterId, id);
@@ -3645,6 +3804,46 @@ function commitTriage() {
   const entry = state.entries.find(e => e.id === triage.entryId);
   if (!entry) { closeTriage(); return; }
   const source = entry.container_id;
+
+  // v2 decisions mode: materialize the REFERENCED pending creates now — the
+  // only moment Copilot-proposed containers are written (nothing pre-creates;
+  // an unreferenced create is simply never made). Then rewrite the
+  // __pending__:<pid> placeholders to the real ids so the normal grouping
+  // below sees ordinary container targets.
+  if (triage.mode === 'decisions' && (triage.pendingCreates || []).length) {
+    const referenced = new Set();
+    for (const c of triage.clusters) {
+      for (const a of c.atoms) {
+        const t = triageTarget(c, a.key);
+        if (typeof t === 'string' && t.startsWith('__pending__:')) referenced.add(t.slice('__pending__:'.length));
+      }
+    }
+    const realByPid = new Map();
+    for (const pc of triage.pendingCreates) {
+      if (!referenced.has(pc.pid)) continue;
+      const id = uniqueSlug(slugify(pc.title || pc.pid));
+      const c = {
+        id, type: pc.kind, title: pc.title || pc.pid,
+        goal_or_purpose: pc.goal_or_purpose || '', summary: '',
+        tags: [], status: 'active', created_at: nowIso(), updated_at: nowIso(),
+      };
+      if (pc.kind === 'project') {
+        const fw = pc.framework && FRAMEWORKS[pc.framework] ? pc.framework : null;
+        c.framework = fw;
+        c.framework_config = fw ? frameworkConfigFor(fw) : {};
+      }
+      state.containers.push(c);
+      if (!triage.createdIds.includes(id)) triage.createdIds.push(id);
+      realByPid.set(pc.pid, id);
+    }
+    const remap = (t) => (typeof t === 'string' && t.startsWith('__pending__:'))
+      ? (realByPid.get(t.slice('__pending__:'.length)) || null)
+      : t;
+    for (const c of triage.clusters) {
+      c.projectId = remap(c.projectId);
+      for (const k of Object.keys(c.overrides)) c.overrides[k] = remap(c.overrides[k]);
+    }
+  }
 
   const byTarget = new Map();
   for (const c of triage.clusters) {
@@ -3685,10 +3884,595 @@ function commitTriage() {
   }
 
   scheduleSave();
+  // A committed decisions-review consumes its pending export.
+  if (triage.mode === 'decisions' && triage.sessionId) deletePendingIngest(triage.sessionId);
   closeTriage();
   closeDrawer(true);
   location.hash = `#/c/${encodeURIComponent(dominant)}`;
   render();
+}
+
+// ---------- Chat about this (Copilot-assisted ingestion · v1) -------
+// Export the current triage draft as a `chat_about_this` bundle the user
+// attaches to a Copilot chat (plus any source docs) for a read-only consult.
+// Writes nothing to state and adds no server endpoint — same no-upload spirit
+// as file import. Spec: copilot-ingestion-spec.md §2 / §8 (v1).
+
+// ---------- v2: pending-export stash (localStorage) -----------------
+// Pairs a pasted decision set back with the bundle it answers — `accept`
+// verdicts carry no body (it lives in proposed{}), so the import NEEDS the
+// original bundle. Export and import may be hours apart, across reloads.
+// Per-browser by design (orange runs both steps in one browser); the import
+// modal's paste/pick-the-bundle fallback covers everything else.
+// Stash shape: { bundle, entryId, newContainerIds, savedAt } —
+// entryId = the triaged entry (NOT in the bundle artifact; Copilot doesn't
+// need it), newContainerIds = real ids of containers created during that
+// triage, in order, so the gate can resolve bundle p1..pN (pRealIds).
+
+const STASH_PREFIX = 'throughline:pending_ingest:';
+
+function listPendingIngests() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(STASH_PREFIX)) continue;
+      try {
+        const s = JSON.parse(localStorage.getItem(k));
+        if (s && s.bundle) out.push(s);
+      } catch { /* corrupt stash — ignore */ }
+    }
+  } catch { /* storage unavailable */ }
+  return out;
+}
+
+function stashPendingIngest(bundle, entryId, newContainerIds) {
+  try {
+    localStorage.setItem(
+      STASH_PREFIX + bundle.session_id,
+      JSON.stringify({ bundle, entryId, newContainerIds: newContainerIds || [], savedAt: Date.now() }),
+    );
+    // Keep the last 5; evict oldest.
+    const all = listPendingIngests().sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+    for (const s of all.slice(5)) localStorage.removeItem(STASH_PREFIX + s.bundle.session_id);
+  } catch { /* storage unavailable/full — the bundle file fallback still works */ }
+}
+
+function findPendingIngest(sessionId) {
+  const all = listPendingIngests();
+  if (sessionId) return all.find(s => s.bundle.session_id === sessionId) || null;
+  return all.length === 1 ? all[0] : null; // no _meta echo: only safe if unambiguous
+}
+
+function deletePendingIngest(sessionId) {
+  try { localStorage.removeItem(STASH_PREFIX + sessionId); } catch { /* ignore */ }
+}
+
+// One-time identity for prompt personalization (no real multi-user identity
+// exists yet — that's E2 M0). Asked once, stored per-browser; an empty answer
+// is remembered too ('' = declined: prompts say "the user" and the gate warns
+// instead of aliasing "narrator" owners).
+function getUserName() {
+  let n = null;
+  try { n = localStorage.getItem('throughline:user_name'); } catch { /* storage unavailable */ }
+  if (n !== null) return n;
+  const asked = (prompt('Your name? (used to attribute "I\'ll…" commitments in Copilot prompts)') || '').trim();
+  try { localStorage.setItem('throughline:user_name', asked); } catch { /* ignore */ }
+  return asked;
+}
+
+// Settings → Profile (T15). The narrator identity above was previously
+// write-once via prompt(); this is the editable surface for it, plus an
+// optional role blurb (stored now, seasoned into consult prompts later).
+// Per-browser localStorage on purpose — real multi-user identity is E2/§M3.
+function openSettingsModal() {
+  let name = '', role = '';
+  try { name = localStorage.getItem('throughline:user_name') || ''; } catch { /* storage unavailable */ }
+  try { role = localStorage.getItem('throughline:user_role') || ''; } catch { /* storage unavailable */ }
+  openModal(`
+    <h2>Settings</h2>
+    <label class="field">
+      <span class="label">My name is</span>
+      <input type="text" id="set-name" value="${escHtml(name)}" placeholder="e.g. Noah Schmuckler" />
+    </label>
+    <p class="muted small">Used to attribute "I'll…" commitments when a consult turns your words into
+    actions — make it match the name you assign actions to. Stored in this browser only.</p>
+    <label class="field">
+      <span class="label">Role (optional)</span>
+      <input type="text" id="set-role" value="${escHtml(role)}" placeholder="e.g. Program manager, IMFM Provider Corner" />
+    </label>
+    <div class="modal-actions">
+      <button class="btn" data-act="set-cancel">Cancel</button>
+      <button class="btn primary" data-act="set-save">Save</button>
+    </div>
+  `, (modal) => {
+    modal.querySelector('[data-act="set-cancel"]').onclick = closeModal;
+    modal.querySelector('[data-act="set-save"]').onclick = () => {
+      try {
+        localStorage.setItem('throughline:user_name', modal.querySelector('#set-name').value.trim());
+        localStorage.setItem('throughline:user_role', modal.querySelector('#set-role').value.trim());
+      } catch { /* storage unavailable */ }
+      closeModal();
+    };
+  });
+}
+
+function downloadJson(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Snapshot the live triage state into the §2 bundle + the context the gate
+// needs later. One builder for BOTH outbound paths: the native consult chat
+// (primary) and the Copilot file export (secondary). Returns null when there
+// is no live triage/entry.
+async function buildChatBundle() {
+  if (!triage) return null;
+  const entry = state.entries.find(e => e.id === triage.entryId);
+  if (!entry) return null;
+
+  // Snapshot the live triage state into a DOM-free draft.
+  const draftAtoms = [];
+  for (const c of triage.clusters) {
+    for (const a of c.atoms) {
+      const t = triageTarget(c, a.key);
+      const target = !t ? null : (t === '__inbox__' ? 'inbox' : t);
+      // suggested = the local model's pick for this cluster (probe 2 showed an
+      // untriaged draft exported all targets null, discarding this signal).
+      draftAtoms.push({ type: a.type, body: a.body, owner: a.owner, due: a.due, target, suggested: c.suggestedId || null });
+    }
+  }
+  const newContainers = (triage.createdIds || [])
+    .map(id => getContainer(id))
+    .filter(Boolean)
+    .map(c => ({
+      id: c.id, type: c.type, title: c.title,
+      goal_or_purpose: c.goal_or_purpose || '', framework: c.framework || null, folder: c.folder || null,
+    }));
+  const draft = { atoms: draftAtoms, newContainers };
+
+  const bundle = assembleBundle({
+    raw_dump: entry.notes || '',
+    file_refs: await dominantBoundFileRefs(draftAtoms),
+    state_summary: buildStateSummary(state, { excludeIds: triage.createdIds || [] }),
+    proposed: buildProposed(draft),
+    needs_clarification: buildNeedsClarification(draft),
+    now: nowIso(),
+  });
+
+  return { bundle, entryId: triage.entryId, newContainerIds: newContainers.map(c => c.id) };
+}
+
+async function chatAboutThis() {
+  const ctx = await buildChatBundle();
+  if (!ctx) return;
+  const { bundle, entryId, newContainerIds } = ctx;
+
+  downloadJson(bundle, `chat-about-this-${bundle.session_id}.json`);
+
+  // Stash the export so a decision set pasted later (even after a reload)
+  // pairs back with this bundle — accept verdicts have no body of their own.
+  stashPendingIngest(bundle, entryId, newContainerIds);
+
+  // Hand the user the opening ask too — the first live consult showed that a
+  // bare "does this look right?" makes Copilot critique the JSON format instead
+  // of the breakdown. The prompt points Copilot at the bundle's _instructions.
+  let copied = false;
+  try { await navigator.clipboard.writeText(OPENING_PROMPT); copied = true; } catch { /* http / no permission */ }
+  alert(
+    'Exported the chat-about-this bundle to your Downloads.\n\n' +
+    'Attach it to a Copilot chat (plus any source files it references) and paste this opening prompt' +
+    (copied ? ' — it\'s on your clipboard:' : ':') + '\n\n' +
+    `"${OPENING_PROMPT}"\n\n` +
+    'Step 2 — when Copilot replies, click "📋 Paste from Copilot" on the dashboard; ' +
+    'the decision-set prompt and the paste box are both in there.\n\n' +
+    'Read-only: nothing was filed.'
+  );
+}
+
+// file_refs = files in the dominant existing target's bound OneDrive folder, if
+// any. Dominant = the real container holding the most atoms. Empty when it is
+// unbound or the lens is unavailable (the Worker 501s /api/fs/*).
+async function dominantBoundFileRefs(draftAtoms) {
+  const counts = new Map();
+  for (const a of draftAtoms) {
+    if (!a.target || a.target === 'inbox') continue;
+    counts.set(a.target, (counts.get(a.target) || 0) + 1);
+  }
+  let dominant = null, best = 0;
+  for (const [t, n] of counts) if (n > best) { best = n; dominant = t; }
+  if (!dominant) return [];
+  const c = getContainer(dominant);
+  if (!c || c.folder == null) return [];
+  try {
+    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(c.folder || '')}`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.files || []).map((f, i) => ({
+      ref_id: 'f' + (i + 1),
+      path: fbJoin(c.folder || '', f.name),
+      kind: (f.ext || '').replace(/^\./, '') || null,
+      note: '',
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ---------- Native consult chat (T13: /api/consult · gpt-5.4) --------
+// The PRIMARY consult path: an in-app chat over the same bundle, replacing
+// the copy-paste Copilot loop (which hard-refused unpredictably — the export/
+// paste path below survives as the secondary engine). Conversation state is
+// EPHEMERAL — in memory only, gone on close/reload; the triage draft stays
+// alive underneath the overlay. "→ Decision set" sends DECISION_PROMPT and
+// routes the reply through the existing parseDecisionSet → resolveDecisions →
+// openDecisionsReview back-half, no copy-paste.
+
+let chat = null; // { bundle, entryId, newContainerIds, messages, busy, llm, elapsed, timer, abort, awaitingDecisionSet }
+
+async function openConsultChat() {
+  const ctx = await buildChatBundle();
+  if (!ctx) return;
+  chat = {
+    ...ctx,
+    messages: [], busy: false, llm: null,
+    elapsed: 0, timer: null, abort: null, awaitingDecisionSet: false,
+  };
+  const shroud = document.getElementById('chat-shroud');
+  shroud.hidden = false;
+  renderConsultChat();
+  // Name the engine in the header from the start (T25) — don't wait for the
+  // first reply. Reply-time `llm` still wins (it reflects what actually ran).
+  fetch('/api/consult').then(r => r.json()).then(d => {
+    if (chat && !chat.llm && d.llm) { chat.llm = d.llm; renderConsultChat(); }
+  }).catch(() => { /* header just says "native model" until a reply */ });
+  // Seed turn 1 with the opening ask so the model engages with the bundle's
+  // _instructions immediately (the first live Copilot consult showed a bare
+  // "does this look right?" gets a JSON-format critique instead).
+  sendConsultTurn(OPENING_PROMPT);
+}
+
+function closeConsultChat() {
+  if (chat?.abort) chat.abort.abort();
+  if (chat?.timer) clearInterval(chat.timer);
+  chat = null;
+  document.getElementById('chat-shroud').hidden = true;
+  // The triage overlay (and draft) underneath is untouched.
+}
+
+function renderConsultChat() {
+  if (!chat) return;
+  const panel = document.getElementById('chat-panel');
+  const msgs = chat.messages.map(m =>
+    m.role === 'assistant'
+      ? `<div class="chat-msg assistant md">${mdToHtml(m.content)}</div>` // model replies are markdown (T14)
+      : `<div class="chat-msg ${m.role === 'error' ? 'error' : 'user'}">${escHtml(m.content)}</div>`
+  ).join('');
+  const busy = chat.busy
+    ? `<div class="chat-busy" id="chat-busy">Consulting ${escHtml(chat.llm || '…')} — <span id="chat-elapsed">${chat.elapsed}</span>s
+         <button class="btn" data-act="chat-cancel">Cancel</button></div>`
+    : '';
+  panel.innerHTML = `
+    <div class="chat-head">
+      <div>
+        <div class="t-eyebrow">Consult — ${escHtml(chat.llm || 'native model')}</div>
+        <div class="chat-title">Chat about this entry</div>
+      </div>
+      <button class="chat-close" aria-label="Close">×</button>
+    </div>
+    <div class="chat-msgs" id="chat-msgs">${msgs}${busy}</div>
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="2" placeholder="Ask about the breakdown…" ${chat.busy ? 'disabled' : ''}></textarea>
+      <div class="chat-actions">
+        <button class="btn primary" data-act="chat-send" ${chat.busy ? 'disabled' : ''}>Send</button>
+        <button class="btn" data-act="chat-decisions" ${chat.busy ? 'disabled' : ''}>→ Decision set</button>
+      </div>
+    </div>
+    <div class="chat-hint">Read-only consult — nothing files until you review and commit a decision set. Close returns to your draft.</div>`;
+
+  panel.querySelector('.chat-close').onclick = closeConsultChat;
+  panel.querySelector('[data-act="chat-send"]')?.addEventListener('click', () => {
+    const ta = panel.querySelector('#chat-input');
+    const text = (ta?.value || '').trim();
+    if (text) sendConsultTurn(text);
+  });
+  panel.querySelector('#chat-input')?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      const text = ev.target.value.trim();
+      if (text && !chat.busy) sendConsultTurn(text);
+    }
+  });
+  panel.querySelector('[data-act="chat-decisions"]')?.addEventListener('click', requestDecisionSet);
+  panel.querySelector('[data-act="chat-cancel"]')?.addEventListener('click', () => {
+    chat?.abort?.abort();
+  });
+  const list = panel.querySelector('#chat-msgs');
+  if (list) list.scrollTop = list.scrollHeight;
+}
+
+async function sendConsultTurn(content) {
+  if (!chat || chat.busy) return;
+  chat.messages.push({ role: 'user', content });
+  chat.busy = true;
+  chat.elapsed = 0;
+  chat.abort = new AbortController();
+  // gpt-5.4 is SLOW (T12: gpt-mini alone took ~90 s on an 8 KB dump) — show
+  // a live elapsed counter + Cancel instead of a frozen overlay.
+  chat.timer = setInterval(() => {
+    if (!chat) return;
+    chat.elapsed++;
+    const el = document.getElementById('chat-elapsed');
+    if (el) el.textContent = chat.elapsed;
+  }, 1000);
+  renderConsultChat();
+
+  const awaiting = chat.awaitingDecisionSet;
+  try {
+    const r = await fetch('/api/consult', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        bundle: chat.bundle,
+        // Stateless provider: the whole history travels every round.
+        messages: chat.messages.filter(m => m.role !== 'error'),
+      }),
+      signal: chat.abort.signal,
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!chat) return; // closed mid-flight
+    if (!r.ok) throw new Error(data.error || `consult ${r.status}`);
+    chat.llm = data.llm || chat.llm;
+    finishConsultTurn();
+    chat.messages.push({ role: 'assistant', content: data.reply });
+    // Only the reply to the "→ Decision set" turn is parsed as one — a normal
+    // prose reply containing {…} must not false-positive into the gate.
+    if (awaiting) routeDecisionSetReply(data.reply);
+    else renderConsultChat();
+  } catch (err) {
+    if (!chat) return; // closed mid-flight
+    finishConsultTurn();
+    chat.awaitingDecisionSet = false;
+    // Visible failure, intact transcript — no silent fallback (the whole
+    // point of the native engine after Copilot's opaque refusal).
+    chat.messages.push({
+      role: 'error',
+      content: err.name === 'AbortError'
+        ? 'Cancelled. The turn was not completed — send again to retry.'
+        : `Consult failed: ${err.message}`,
+    });
+    renderConsultChat();
+  }
+}
+
+function finishConsultTurn() {
+  if (chat.timer) clearInterval(chat.timer);
+  chat.timer = null;
+  chat.busy = false;
+  chat.abort = null;
+}
+
+function requestDecisionSet() {
+  if (!chat || chat.busy) return;
+  chat.awaitingDecisionSet = true;
+  sendConsultTurn(DECISION_PROMPT(getUserName()));
+}
+
+function routeDecisionSetReply(reply) {
+  chat.awaitingDecisionSet = false;
+  const obj = parseDecisionSet(reply);
+  if (obj && isDecisionSet(obj)) {
+    const stash = { bundle: chat.bundle, entryId: chat.entryId, newContainerIds: chat.newContainerIds };
+    const engine = chat.llm || 'Native consult';
+    closeConsultChat();
+    openDecisionsReview(stash, obj, { engine });
+    return;
+  }
+  chat.messages.push({
+    role: 'error',
+    content: 'That reply didn\'t parse as a decision set — ask the model to re-emit the complete raw JSON, or click "→ Decision set" again.',
+  });
+  renderConsultChat();
+}
+
+// ---------- Paste from Copilot (Copilot-assisted ingestion · v2) -----
+// The inbound channel. Paste field first (probe 2: Copilot prints in-chat
+// far more reliably than it produces downloads), file picker fallback.
+// Three grades of input, one surface (spec §7b):
+//   §3 decision-set JSON → the gate → decisions-mode review overlay
+//   the bundle JSON      → paired in-memory for the next paste
+//   anything else        → freetext → Inbox entry → Atomize (existing path)
+
+let ciPendingBundle = null; // a bundle pasted in this modal session (in-memory pairing)
+
+function openCopilotImport() {
+  ciPendingBundle = null;
+  openModal(`
+    <div class="modal-title">📋 Paste from Copilot</div>
+    <p class="muted small">Paste Copilot's <b>decision set</b> (the JSON it returns to the
+    decision-set prompt). It runs through the verify gate into a review screen — nothing
+    is filed until you commit there. Plain text becomes an Inbox entry ready to atomize.</p>
+    <textarea id="ci-paste" rows="10" style="width:100%" placeholder="Paste here — the decision-set JSON, the bundle JSON, or plain text…"></textarea>
+    <div class="modal-actions">
+      <button class="btn" data-act="ci-prompt">Copy decision-set prompt</button>
+      <button class="btn" data-act="ci-file">…or pick a file</button>
+      <button class="btn primary" data-act="ci-go">Import</button>
+    </div>
+    <div class="muted small" id="ci-hint"></div>
+  `, (modal) => {
+    const hint = (msg) => { const el = modal.querySelector('#ci-hint'); if (el) el.textContent = msg; };
+    modal.querySelector('[data-act="ci-prompt"]').onclick = async () => {
+      const p = DECISION_PROMPT(getUserName());
+      try { await navigator.clipboard.writeText(p); hint('Prompt copied — paste it to Copilot after the consult.'); }
+      catch { hint(p); } // http / no clipboard permission: show it instead
+    };
+    modal.querySelector('[data-act="ci-file"]').onclick = () => {
+      let input = document.getElementById('ci-file-input');
+      if (!input) {
+        input = document.createElement('input');
+        input.type = 'file';
+        input.id = 'ci-file-input';
+        input.accept = '.json,.txt,application/json,text/plain';
+        input.hidden = true;
+        document.body.appendChild(input);
+      }
+      input.value = '';
+      input.onchange = () => {
+        const f = input.files && input.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onerror = () => hint('Could not read that file.');
+        reader.onload = () => handleCopilotIntake(String(reader.result || ''), modal);
+        reader.readAsText(f);
+      };
+      input.click();
+    };
+    modal.querySelector('[data-act="ci-go"]').onclick = () =>
+      handleCopilotIntake(modal.querySelector('#ci-paste')?.value, modal);
+  });
+}
+
+function handleCopilotIntake(text, modal) {
+  const t = String(text || '').trim();
+  if (!t) return;
+  const hint = (msg) => { const el = modal?.querySelector('#ci-hint'); if (el) el.textContent = msg; };
+  const obj = parseDecisionSet(t);
+
+  // Tried to be JSON but didn't parse (even after the repair pass): error
+  // visibly and keep the modal open. Never entry-ify broken JSON — the first
+  // live run turned a malformed paste into a garbage entry titled "{".
+  if (!obj && looksLikeJson(t)) {
+    hint('That looks like JSON but it didn\'t parse — it\'s probably truncated or malformed. ' +
+      'Ask Copilot for "the same JSON again, complete and raw, no commentary", then paste that. Nothing was imported.');
+    return;
+  }
+
+  if (obj && isBundle(obj)) {
+    // The bundle itself — pair it for the decision set that follows (covers
+    // pre-stash exports and cross-device imports).
+    ciPendingBundle = { bundle: obj, entryId: null, newContainerIds: [] };
+    const ta = modal?.querySelector('#ci-paste');
+    if (ta) ta.value = '';
+    hint(`Bundle ${obj.session_id || ''} loaded — now paste Copilot's decision set.`);
+    return;
+  }
+
+  if (obj && isDecisionSet(obj)) {
+    const sid = (obj._meta && obj._meta.session_id) || null;
+    const stash = findPendingIngest(sid) || ciPendingBundle;
+    if (!stash) {
+      hint(sid
+        ? `No pending export matches session ${sid} on this browser — paste or pick the bundle JSON first.`
+        : 'No pending export found on this browser — paste or pick the bundle JSON first.');
+      return;
+    }
+    closeModal();
+    ciPendingBundle = null;
+    openDecisionsReview(stash, obj);
+    return;
+  }
+
+  if (obj) {
+    // Valid JSON, but neither artifact — don't guess, don't entry-ify.
+    hint('That JSON parsed, but it isn\'t a chat-about-this bundle or a decision set — nothing was imported.');
+    return;
+  }
+
+  // Genuine freetext (a prose Copilot reply, an email, anything) → the
+  // existing capture path: Inbox entry, one click from Atomize.
+  closeModal();
+  ciPendingBundle = null;
+  importText(t);
+}
+
+// Gate the decision set against its bundle and open the review overlay —
+// a decisions-mode triage. NOTHING mutates atom/container state here (the
+// stale-entry fallback may add one entry to hold raw_dump); all real writes
+// happen in commitTriage when the user commits.
+function openDecisionsReview(stash, decisions, { engine = null } = {}) {
+  const { bundle, entryId, newContainerIds = [] } = stash;
+  const plan = resolveDecisions(bundle, decisions, {
+    state,
+    userName: getUserName(),
+    pRealIds: newContainerIds,
+  });
+
+  // The source entry: the originally-triaged one, else re-created from
+  // raw_dump (so §6's "raw dump preserved first" holds across deletion).
+  let entry = entryId ? state.entries.find(e => e.id === entryId) : null;
+  if (!entry) {
+    entry = importText(bundle.raw_dump || '', {
+      title: `Copilot ingest ${bundle.session_id || ''}`.trim(),
+      open: false,
+    });
+    plan.warnings.push({ code: 'entry_recreated', msg: 'The original entry was not found — re-created it from the bundle\'s raw_dump.', ids: [] });
+  }
+
+  // Group resolved atoms by target → triage-shaped clusters. Null targets
+  // collect in an "Unassigned / needs attention" cluster (always last).
+  const byTarget = new Map();
+  for (const a of plan.atoms) {
+    const key = a.target == null ? '__none__' : a.target;
+    if (!byTarget.has(key)) byTarget.set(key, []);
+    byTarget.get(key).push(a);
+  }
+  const keys = [...byTarget.keys()].sort((x, y) => (x === '__none__') - (y === '__none__'));
+  const clusters = keys.map((t, ci) => {
+    const pendingC = t !== '__none__' ? plan.containerCreates.find(c => c.pid === t) : null;
+    const real = (t !== '__none__' && !pendingC) ? getContainer(t) : null;
+    // Cross-program misfiles hide behind a good project NAME (T21) — when the
+    // target lives inside a program, say which one so provenance is reviewable.
+    const realProg = real && real.program_id ? getContainer(real.program_id) : null;
+    const name = t === '__none__' ? '⚠ Unassigned / needs attention'
+      : pendingC ? `${pendingC.title} (new ${pendingC.kind === 'project' ? 'project' : 'reference'})`
+        : t === 'inbox' ? 'Inbox'
+          : (real ? `${real.title}${realProg ? ` · in program: ${realProg.title}` : ''}` : t);
+    const projectId = t === '__none__' ? null
+      : pendingC ? `__pending__:${t}`
+        : t === 'inbox' ? '__inbox__'
+          : t;
+    return {
+      id: 'dc_' + ci,
+      name,
+      suggestedId: null,
+      projectId,
+      overrides: {},
+      atoms: byTarget.get(t).map((a, ai) => ({
+        key: `${ci}_${ai}`, type: a.type, body: a.body,
+        owner: a.owner || undefined, due: a.due || undefined,
+      })),
+    };
+  });
+
+  triage = {
+    entryId: entry.id,
+    source: 'decisions',
+    llm: null,
+    engine, // who produced the decision set (null → 'Copilot', the paste path)
+    mode: 'decisions',
+    clusters,
+    expanded: {},
+    newForm: {},
+    createdIds: [],
+    // decisions-mode extras (consumed by renderTriage + commitTriage):
+    pendingCreates: plan.containerCreates,
+    warnings: plan.warnings,
+    dropped: plan.dropped,
+    unaddressed: plan.unaddressed,
+    sessionId: bundle.session_id || null,
+    info: plan.info,
+  };
+  const shroud = document.getElementById('triage-shroud');
+  shroud.hidden = false;
+  shroud.onclick = (ev) => { if (ev.target === shroud) closeTriage(); };
+  renderTriage();
 }
 
 // ---------- Boot ---------------------------------------------------
@@ -3702,6 +4486,7 @@ function commitTriage() {
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     meta.textContent = `Dyad workspace · ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
   }
+  document.getElementById('hdr-settings')?.addEventListener('click', openSettingsModal);
   await loadState();
   await maybeRedirectToSetup();
   render();

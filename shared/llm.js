@@ -47,6 +47,21 @@ function tierModel(provider, tier, env) {
     || TIER_MODEL[provider]?.reason;
 }
 
+// Human-readable descriptor of the model makeLLMCall(env) would use for a
+// tier — "cdsapi · gpt-mini" — or null when it would return null (heuristic).
+// Surfaced by /api/atomize so the triage UI can say WHO produced the draft
+// (T8: a silent heuristic degradation was indistinguishable from a model run).
+export function describeLLM(env = {}, tier = 'reason') {
+  const provider = String(env.LLM_PROVIDER || 'heuristic').toLowerCase();
+  if (provider === 'anthropic' && env.ANTHROPIC_API_KEY) {
+    return `anthropic · ${env.ANTHROPIC_MODEL || tierModel('anthropic', tier, env)}`;
+  }
+  if (provider === 'cdsapi') {
+    return `cdsapi · ${env.LLM_MODEL || tierModel('cdsapi', tier, env)}`;
+  }
+  return null;
+}
+
 export function makeLLMCall(env = {}) {
   const provider = String(env.LLM_PROVIDER || 'heuristic').toLowerCase();
 
@@ -60,8 +75,8 @@ export function makeLLMCall(env = {}) {
       console.warn('[llm] LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is unset; using heuristic.');
       return null;
     }
-    return ({ prompt, tier = 'reason' }) =>
-      callAnthropic({ apiKey, model: env.ANTHROPIC_MODEL || tierModel('anthropic', tier, env), prompt });
+    return ({ prompt, tier = 'reason', json = true }) =>
+      callAnthropic({ apiKey, model: env.ANTHROPIC_MODEL || tierModel('anthropic', tier, env), prompt, json });
   }
 
   if (provider === 'cdsapi') {
@@ -106,7 +121,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 const JSON_SYSTEM = 'You are a precise data-extraction service. Respond with raw JSON only — no prose, no markdown fences.';
 
-async function callAnthropic({ apiKey, model, prompt }) {
+async function callAnthropic({ apiKey, model, prompt, json = true }) {
   const res = await fetchRetry(ANTHROPIC_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -117,7 +132,9 @@ async function callAnthropic({ apiKey, model, prompt }) {
     body: JSON.stringify({
       model,
       max_tokens: 4096,
-      system: JSON_SYSTEM,
+      // json:false (consult prose turns) must NOT force the JSON-only system
+      // prompt — the cdsapi path makes the same json-gated distinction.
+      ...(json ? { system: JSON_SYSTEM } : {}),
       messages: [{ role: 'user', content: prompt }],
     }),
   });

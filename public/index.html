@@ -18,7 +18,10 @@
         <span class="hdr-badge">Throughline</span>
         <span class="hdr-meta" id="hdr-meta"></span>
       </a>
-      <div class="topbar-status" id="status" aria-live="polite"></div>
+      <div class="hdr-top-right">
+        <div class="topbar-status" id="status" aria-live="polite"></div>
+        <button class="hdr-settings" id="hdr-settings" aria-label="Settings" title="Settings">⚙</button>
+      </div>
     </header>
 
     <main id="main"></main>
@@ -43,6 +46,12 @@
       <div class="triage" id="triage" role="dialog" aria-modal="true" aria-label="Entry triage"></div>
     </div>
 
+    <!-- Consult chat overlay (T13: native gpt-5.4 consult). Layers ABOVE the
+         triage overlay — the triage draft stays alive underneath. -->
+    <div class="chat-shroud" id="chat-shroud" hidden>
+      <div class="chat-panel" id="chat-panel" role="dialog" aria-modal="true" aria-label="Consult chat"></div>
+    </div>
+
     <template id="tpl-home">
       <section class="home">
         <div class="hdr-main">
@@ -63,6 +72,7 @@
           <span class="actionbar-sep" aria-hidden="true"></span>
           <button class="btn" data-act="new-adhoc">✎ Ad-hoc note</button>
           <button class="btn" data-act="import-file">⤓ Import .md…</button>
+          <button class="btn" data-act="paste-copilot">📋 Paste from Copilot</button>
           <span class="actionbar-hint">…or drop a Markdown file anywhere here</span>
         </div>
         <div id="home-view-body"></div>

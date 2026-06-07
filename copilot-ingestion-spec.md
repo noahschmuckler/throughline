@@ -38,7 +38,7 @@ dump (+docs) ──▶ local extract (mini/5.4) ──▶ DRAFT  ──▶ triag
                                                           reads docs, returns verdicts
                                                                    │
                                                                    ▼
-                                              download → ~/Downloads → import → GATE ───┘
+                                       paste-in (primary) / download → import → GATE ───┘
 ```
 
 ---
@@ -68,10 +68,23 @@ The user attaches this file (and any source docs) to the Copilot chat.
 attach them to the chat.** `file_refs` paths are recorded for the lens, not as
 Copilot's retrieval mechanism.
 
+**Lesson from the first live consult (2026-06-06): the bundle must be
+self-describing.** A bare JSON file + "does this look right?" made Copilot review
+the JSON *format* (verbose structural praise) instead of consulting on the
+breakdown. Two-layer fix: (1) every bundle embeds **`_instructions`** — a task
+brief telling the reading model its role (critique the atom breakdown + filing,
+flag what `raw_dump`'s draft missed, help answer `needs_clarification[]`, prefer
+existing containers; do NOT review formatting) — the probe proved Copilot follows
+instructions inside attached content; (2) "Chat about this" also copies an
+**opening prompt** to the clipboard (`OPENING_PROMPT` in `ingest.js`) so the chat
+starts on the consult, not on JSON critique. v2's decision-set reply will harden
+this same scaffold into a strict output contract.
+
 ```jsonc
 {
   "_artifact": "throughline.chat_about_this",
   "_schema": "ingest-v1",
+  "_instructions": "You are consulting on a draft ingestion for Throughline, ...", // task brief for the reading model (BUNDLE_INSTRUCTIONS)
   "version_hash": "tl_9f3a1c77",          // hash over proposed{} — integrity/staleness check
   "created_at": "2026-06-06T14:00:00Z",
   "session_id": "ing_2026-06-06_1400",    // ties the eventual decision set back to this draft
@@ -86,9 +99,16 @@ Copilot's retrieval mechanism.
   "state_summary": {                      // working memory so Copilot places against REAL ids
     "containers": [
       { "id": "c_abc", "type": "reference_file", "title": "Credentialing SOPs",
-        "summary": "...", "open_actions": 2 },
+        "summary": "...", "program_id": null, "open_actions": 2 },
       { "id": "c_def", "type": "project", "framework": "kanban",
-        "title": "Provider onboarding Q3", "summary": "...", "open_actions": 5 }
+        "title": "Provider onboarding Q3", "summary": "...",
+        "program_id": "c_net", "open_actions": 5 },
+      { "id": "c_net", "type": "program", "title": "Provider network reliability",
+        "summary": "...", "program_id": null, "open_actions": 0,
+        "objective": "Every provider question answerable in one place",
+        "key_results": [
+          { "label": "Roster questions self-served", "current": 20, "target": 90, "unit": "%" }
+        ] }
     ],
     "recent_actions": [ { "id": "at_x", "body": "...", "container_id": "c_def", "due_date": "2026-06-15" } ],
     "key_people": [ { "name": "Natalia Peden", "open": 4 } ]
@@ -103,11 +123,14 @@ Copilot's retrieval mechanism.
     ],
     "atoms": [
       { "id": "a1", "kind": "action", "body": "Check which providers' credentialing is expiring.",
-        "target": "p1", "assigned_to": null, "due_date": null,
+        "target": "p1", "suggested_target": "p1", "assigned_to": null, "due_date": null,
         "source_ref": null, "confidence": 0.5 },
       { "id": "a2", "kind": "observation", "body": "People keep asking who accepts new Medicaid patients.",
-        "target": "p1", "source_ref": null, "confidence": 0.7 }
+        "target": null, "suggested_target": "p1", "source_ref": null, "confidence": 0.7 }
     ]
+    // target = the user's confirmed assignment (null until triaged);
+    // suggested_target = the local draft model's unconfirmed pick — kept distinct
+    // so an untriaged export still carries the draft's placement signal (§7b).
   },
 
   "needs_clarification": [
@@ -120,6 +143,13 @@ Copilot's retrieval mechanism.
 `state_summary` is a **reduced** view (titles + ids + open counts + brief
 summaries), never the full `state.json` — it's already >100 KB. It exists so
 Copilot can say `"target": "c_def"` against a real container instead of guessing.
+
+**Program hierarchy stays visible in the flat list** (fixed 2026-06-06): every
+container entry carries **`program_id`** (null = standalone), and `type:"program"`
+entries add **`objective`** + **`key_results`** (label/current/target/unit — internal
+kr ids never leave). Copilot reconstructs program → projects from `program_id`; no
+nesting needed. A project's context is usually set by its parent program and sibling
+projects, so this matters for placement quality.
 
 ---
 
@@ -178,6 +208,28 @@ answer as prose *before* the block; the gate reads only the JSON.
 Sits between the imported decision set and the triage overlay. **Nothing is
 filed by the gate** — its output is a *flagged* draft the human still curates.
 Order: A → (B if needed) → re-A → C → D → E.
+
+> **AS BUILT (v2, 2026-06-06 — `public/gate.js` + `test/gate.test.mjs`):**
+> stages **A, D-lite, E shipped**; **B (5.4 repair) and C (SheetJS
+> source_ref bounds-check) deferred** to the next slice. Three deliberate
+> divergences from the text below, all per the locked decision "everything
+> lands in review, nothing auto-applies":
+> 1. **§4A.4 unresolved target → `null` (review's "needs attention"
+>    cluster), NOT Inbox** — a silent Inbox default is itself an
+>    auto-decision; the human picks in review instead.
+> 2. **§4D coverage >40% → loud `coverage_low` WARNING, not an abort** —
+>    an auto-abort is also an auto-decision. Unverdicted atoms are excluded
+>    from import but listed ("Not addressed by Copilot"); the raw dump in
+>    the entry notes keeps everything recoverable.
+> 3. **Verbs are intent, not contract** (§7b#1): the gate applies whatever
+>    valid fields a verdict carries regardless of its verb, instead of §4A.3
+>    coercion.
+> Plus two rules the text below predates: **program targets** remap to the
+> program's only child project, else clear to null + warning (programs hold
+> no atoms); **`narrator`/`me`-style owners** alias to the stored user name.
+> Bundle `p*` verdicts (containers created during the original triage =
+> already-committed state) are surfaced and skipped — committed-state edits
+> are E3.5.
 
 ### A. Structural validation (pure code; cheap)
 1. Parse JSON. On parse failure → go to **B** (5.4 repair), retry **once**.
@@ -309,6 +361,82 @@ Atoms hang off **entries**, so commit can't just write atoms:
 5. **JSON discipline was clean on run 1** — encouraging, but unproven across runs;
    keep the 5.4 repair path. (Consistency probe = run the same prompt 3×.)
 
+## 7b. Probe 2 (2026-06-06) — a REAL decision set, Mode A, full workspace
+
+Setup: the live program-retool dump (~7.6 KB) ran the real loop for the first
+time — gpt-mini draft (28 atoms, 5 actions) → bundle (38-container
+`state_summary` incl. the new `program_id` hierarchy) → high-utility prose
+consult → a follow-up prompt embedding the §3 shape → **Copilot returned a
+complete, valid §3 decision set on the first try.** Raw artifacts: local-only at
+`data/probe2/` (sensitive — scrubbed from git history after review; do NOT
+recommit).
+
+**What worked (de-risks the gate):**
+- Single valid JSON object keyed by id; all 28 `a*` ids verdicted, no id
+  invented, no id skipped. 5 `n*` creates + 1 `p*` container create.
+- **Real container ids used correctly throughout** — every `target` was a
+  verbatim `state_summary` id or the new `p*`. Zero fabricated containers.
+- Full verb vocabulary exercised (accept/edit/drop/recategorize/create/
+  merge_into); `merge_into` targets were surviving atom ids, no cycles.
+- It caught the draft's fabricated action and `drop`ped it with the right note.
+- `note` + `confidence` on every verdict.
+
+**Gate requirements discovered (the guardrail list):**
+1. **Verbs blur — make the gate field-driven, not verb-strict.** `recategorize`
+   verdicts also carried new `body` text (spec said that's `edit`'s job). Apply
+   whatever valid fields are present; treat the verb as intent, not contract.
+2. **Id allocation is assumed, not negotiated** — with no `p*` in proposed{},
+   Copilot minted `p2` (not `p1`). Gate: accept any *unused* `p*`/`n*` key as a
+   create; never assume sequence.
+3. **Atoms targeted at a PROGRAM container** — several verdicts filed atoms onto
+   the program itself. Legal in the data model (entries key off any container
+   id) but the program detail page renders the OKR dashboard, not entries →
+   those atoms would be near-invisible. Gate: warn + offer remap (child project
+   or keep), or the program page grows an entries surface. DECIDE BEFORE v2.
+4. **`assigned_to: "narrator"`** — first-person commitments got a placeholder
+   owner. Gate: alias-resolve narrator/me/I → the instance user (couples to
+   multi-user M0 identity); also `_instructions` should state who the user is.
+   (It did correctly pull other owners' full names out of the raw dump.)
+5. **No `source_ref`, no `due_date`** — consistent with probe 1's "ignores fine
+   fields" finding, now confirmed in Mode A (no quoted raw_dump grounding
+   either). The 5.4 normalize pass stays load-bearing.
+6. **Empty-string noise on drop/merge** (`body:""`, `kind`, nulls) — harmless;
+   gate ignores extra/empty fields.
+7. **No `_meta` echo** (version_hash/session_id) — the §3 optional echo won't
+   come back unless the requesting prompt explicitly demands it. v2's
+   decision-set request prompt must ask for it if staleness checking matters.
+
+**Bundle gap found (v1.x fix):** the draft's per-cluster `suggestedId` never
+reaches proposed{} — `chatAboutThis` snapshots the *assigned* target only, so an
+untriaged draft exports every atom as `target:null` (this run: all 28) and
+Copilot re-derives placement from scratch. It placed well anyway, but the
+draft's signal is being thrown away: add `suggested_target` to proposed atoms.
+
+**Workflow lesson:** the two-step flow (consult prose first, *then* request the
+decision set) worked and is worth keeping — folding the §3 format into the
+initial `_instructions` risks Copilot skipping the conversation and jumping to
+output. v2 ships the decision-set request as a second copy-paste prompt.
+
+**Engine reliability lesson (2026-06-06, acceptance run):** in the 4th
+iteration session Copilot hard-refused the decision-set prompt ("sorry, it
+looks like I can't chat about this") after a good consult reply — no recourse,
+no explanation; suspects are repeated structured-output prompts reading as
+jailbreak-y or the dump's clinical content (controlled substances) tripping a
+filter on the mechanical-JSON turn. **Consequence: Copilot demotes to an
+optional engine; the primary reasoner becomes gpt-5.4 via cdsapi (`/api/consult`,
+ticket T13)** — the bundle/decision-set/gate pipeline is engine-agnostic by
+design, so only the transport changes. Copilot remains the only OneDrive-binary
+reader until vendored SheetJS closes that gap.
+
+**Inbound channel lesson:** Copilot printed the decision set **in-chat**, not as
+a downloadable file — it's inconsistent about producing downloads. So v2's
+import surface is a **paste field first, file picker second** (the Downloads
+browser becomes the fallback, not the primary). Bonus: a paste field naturally
+handles the non-JSON case — pasted freetext (a prose Copilot reply, or any raw
+text) routes to the existing cdsapi re-process path (atomize) instead of the
+gate. One intake surface, three grades: §3 JSON → gate; near-JSON → 5.4 repair →
+gate; freetext → atomize.
+
 ---
 
 ## 8. Phasing
@@ -318,9 +446,42 @@ Atoms hang off **entries**, so commit can't just write atoms:
   import/gate.** Smallest thing that delivers the missing conversation; zero
   ingestion risk. ("Does this look about right?")
 - **v2 — decisions back in.** Import the decision set, run the full gate (§4),
-  land in triage. The real loop. Adds `atom.source_ref`, the home-scoped Downloads
-  browser, the 5.4 normalize pass, and **vendored SheetJS** for §4C source_ref
-  bounds-checking (bundled in the installer — no separate install).
+  land in triage. The real loop. Adds the **paste-in import field** (primary
+  channel — Copilot prints in-chat more reliably than it makes downloads; pasted
+  freetext degrades to the atomize path) with the home-scoped Downloads browser
+  as the file fallback, `atom.source_ref`, the 5.4 normalize pass, and
+  **vendored SheetJS** for §4C source_ref bounds-checking (bundled in the
+  installer — no separate install).
+  **STATUS (2026-06-06): CORE SHIPPED on `copilot-ingestion`** — paste-in
+  intake (📋 Paste from Copilot: decision set → gate → decisions-mode review;
+  bundle → in-memory pairing; freetext → Inbox entry), `public/gate.js` (§4
+  as-built note above), the decisions-mode triage overlay with commit-time
+  container materialization, the localStorage pending-export stash
+  (`throughline:pending_ingest:<session_id>`, keep-5; pairing is per-browser —
+  the paste-the-bundle fallback covers everything else), `DECISION_PROMPT`
+  (the second prompt), `suggested_target` in proposed{}, and the one-time
+  user-name identity (`throughline:user_name`). **Still open in v2:** the
+  5.4 normalize/repair pass, SheetJS `source_ref` bounds-check, file-picker
+  polish, `atom.source_ref` persistence on committed atoms.
+- **v2.5 / T13 — native consult engine: SHIPPED + VERIFIED LIVE 2026-06-07**
+  (full loop on orange, first-ever commit through the decisions pipeline —
+  gpt-5.4 processed the clinical-content braindump WITHOUT refusing; consult
+  quality ≈ Copilot's best; ~60 s decision set, 46 atoms, committed clean).
+  Background: a live acceptance run hit a hard, unexplained Copilot
+  refusal on the decision-set prompt → **Copilot demoted to the optional
+  secondary engine; the primary reasoner is gpt-5.4 via cdsapi**, in-app.
+  `shared/consult.js` + `/api/consult` (both backends): stateless
+  bundle+history prompt per round, tier `escalate`, `json:false`, NO heuristic
+  fallback (errors surface visibly in-chat — the whole point). Chat overlay
+  above the live triage draft (ephemeral transcript, elapsed+Cancel);
+  "→ Decision set" routes the reply through the UNCHANGED §4 gate →
+  decisions-mode review → commit (back-half reused verbatim — the pipeline
+  was engine-agnostic by construction). "💬 Chat about this" = native chat;
+  "⬇ Export for Copilot" + 📋 Paste from Copilot = the secondary loop,
+  unchanged. Mode B (OneDrive binaries) remains Copilot-only until SheetJS.
+  Same-day follow-ups: chat markdown rendering, Settings/Profile (narrator
+  identity), atomize elapsed counter + failure diagnostics + repair parser
+  (T12/T14/T15/T20 — see TICKETS.md). Run critiques queued as T16–T19.
 - **v3 — auto-expansion.** Only if v2 proves the round-trips are worth automating:
   Copilot requests more detail on a thin item → Throughline extracts → re-export.
   Highest complexity, least-used; deferred on purpose.

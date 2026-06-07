@@ -1427,6 +1427,13 @@ input[type="color"] { height: 34px; padding: 2px; cursor: pointer; }
 .triage-close { position: absolute; top: -4px; right: 0; background: none; border: none; font-size: 1.4rem; line-height: 1; color: var(--mute); cursor: pointer; }
 .triage-close:hover { color: var(--ink); }
 
+/* Decisions mode (v2): gate warnings + dropped/unaddressed strips */
+.t-warnings { background: var(--a-faint, #f6ecdf); border-bottom: 1px solid var(--card-edge); padding: 8px 18px; max-height: 130px; overflow-y: auto; }
+.t-warning { font-size: 0.72rem; color: var(--a-tone, #8a5a2b); padding: 1px 0; }
+.t-dropped { border-bottom: 1px solid var(--card-edge); padding: 6px 18px; background: var(--rail); }
+.t-dropped summary { font-size: 0.7rem; color: var(--mute); cursor: pointer; padding: 2px 0; }
+.t-dropped-item { font-size: 0.72rem; color: var(--mute); padding: 2px 0 2px 14px; text-decoration: line-through; text-decoration-color: rgba(0,0,0,0.25); }
+
 .t-body { display: flex; flex: 1; overflow: hidden; }
 .t-clusters { flex: 1; overflow-y: auto; padding: 14px 16px 22px; }
 .t-sidebar { width: 200px; flex-shrink: 0; border-left: 1px solid var(--card-edge); background: var(--rail); padding: 14px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
@@ -1439,6 +1446,43 @@ input[type="color"] { height: 34px; padding: 2px; cursor: pointer; }
 .t-commit .btn { width: 100%; }
 .t-commit .btn.ready { background: var(--u-tone); border-color: var(--u-tone); color: #fff; }
 .t-commit-hint { font-size: 0.66rem; color: var(--mute); text-align: center; margin-top: 5px; }
+.t-commit .t-chat-btn { margin-top: 12px; }
+
+/* ------------------------------------------------------------------ */
+/* Consult chat overlay (T13: native gpt-5.4 consult)                  */
+/* Layers above the triage overlay (z 90) — the draft stays underneath. */
+/* ------------------------------------------------------------------ */
+
+.chat-shroud { position: fixed; inset: 0; background: rgba(20,18,14,0.45); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 100; }
+.chat-panel { width: min(720px, 94vw); height: min(82vh, 760px); display: flex; flex-direction: column; background: var(--paper); border: 1px solid var(--card-edge); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.3); }
+.chat-head { background: var(--card); border-bottom: 1px solid var(--card-edge); padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; }
+.chat-head .t-eyebrow { margin-bottom: 0; }
+.chat-title { font-family: var(--display); font-size: 1.05rem; }
+.chat-close { background: none; border: none; font-size: 1.4rem; line-height: 1; color: var(--mute); cursor: pointer; }
+.chat-close:hover { color: var(--ink); }
+.chat-msgs { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+.chat-msg { max-width: 86%; padding: 9px 12px; border-radius: 10px; font-size: 0.82rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: break-word; }
+.chat-msg.user { align-self: flex-end; background: var(--d-faint, #e8eef5); border: 1px solid var(--card-edge); }
+.chat-msg.assistant { align-self: flex-start; background: var(--card); border: 1px solid var(--card-edge); }
+.chat-msg.error { align-self: stretch; max-width: none; background: var(--overdue-faint, #f6e3df); border: 1px solid var(--overdue, #b04a35); color: var(--overdue, #b04a35); }
+/* Rendered-markdown assistant bubbles (T14): block layout, not pre-wrap. */
+.chat-msg.md { white-space: normal; }
+.chat-msg.md p { margin: 0 0 8px; }
+.chat-msg.md p:last-child, .chat-msg.md ul:last-child, .chat-msg.md ol:last-child { margin-bottom: 0; }
+.chat-msg.md h3, .chat-msg.md h4, .chat-msg.md h5, .chat-msg.md h6 { font-family: var(--sans); font-size: 0.84rem; font-weight: 700; margin: 12px 0 5px; }
+.chat-msg.md h3:first-child, .chat-msg.md h4:first-child { margin-top: 0; }
+.chat-msg.md ul, .chat-msg.md ol { margin: 0 0 8px; padding-left: 20px; }
+.chat-msg.md li { margin: 2px 0; }
+.chat-msg.md code { font-family: 'JetBrains Mono', monospace; font-size: 0.76rem; background: var(--rail); padding: 1px 4px; border-radius: 3px; }
+.chat-msg.md pre { background: var(--rail); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 8px 10px; overflow-x: auto; margin: 0 0 8px; }
+.chat-msg.md pre code { background: none; padding: 0; white-space: pre; }
+.chat-msg.md hr { border: none; border-top: 1px solid var(--card-edge); margin: 10px 0; }
+.chat-busy { display: flex; align-items: center; gap: 10px; font-size: 0.75rem; color: var(--mute); padding: 4px 2px; }
+.chat-busy .btn { padding: 2px 10px; font-size: 0.7rem; }
+.chat-input-row { border-top: 1px solid var(--card-edge); background: var(--rail); padding: 10px 14px; display: flex; gap: 8px; align-items: flex-end; }
+.chat-input-row textarea { flex: 1; resize: none; min-height: 40px; max-height: 120px; font: inherit; font-size: 0.82rem; padding: 8px 10px; border: 1px solid var(--card-edge); border-radius: var(--radius); background: var(--paper); }
+.chat-actions { display: flex; flex-direction: column; gap: 6px; }
+.chat-hint { font-size: 0.66rem; color: var(--mute); padding: 0 16px 10px; background: var(--rail); }
 
 .t-cluster { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); margin-bottom: 8px; overflow: hidden; }
 .t-cluster.assigned { border-width: 1.5px; }
@@ -1501,6 +1545,9 @@ main { padding-top: 0; }
   color: #fff; background: var(--teal); padding: 3px 11px; border-radius: 11px;
 }
 .hdr-meta { font-size: 0.72rem; color: var(--on-navy-mute); }
+.hdr-top-right { display: inline-flex; align-items: center; gap: 12px; }
+.hdr-settings { background: none; border: none; color: var(--on-navy-mute); font-size: 0.95rem; line-height: 1; cursor: pointer; padding: 2px 4px; }
+.hdr-settings:hover { color: #fff; }
 .hdr-top .topbar-status { color: var(--on-navy-mute); }
 .hdr-top .topbar-status[data-state="saving"] { color: #7fd4e0; }
 .hdr-top .topbar-status[data-state="saved"]  { color: #9fd9ac; }

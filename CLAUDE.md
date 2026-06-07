@@ -6,7 +6,161 @@ that aren't documented there or in the code — the deploy quirks, branch
 topology at time of writing, and patterns worth knowing before changing
 things.
 
-Snapshot date: 2026-06-01.
+Snapshot date: 2026-06-07.
+
+## WHERE WE ARE NOW (read this first)
+
+**The ingestion epic is SHIPPED and live-verified end-to-end** (v1 consult →
+v2 decisions-back-in → T13 native gpt-5.4 engine — the two sections below).
+**Everything is on `copilot-ingestion`, NOT merged to `main`** (user review
+required before merge). Tests: 77/77 (`node --test test/`).
+
+**There is NO current sprint.** The queued work lives in **`TICKETS.md`**
+(repo root, local-only/gitignored — Noah's review file): Open tickets
+T1–T3, T5–T7, T9–T11, T16–T20; Done holds T4, T8, T12–T15 and T13. **Next
+step is a TICKETS processing session** (triage → prioritize → plan the next
+sprint). Expect it to become the **VISION.md Epic E3 planning conversation**
+— most open tickets converge there: T16 (server-side async ingestion queue),
+T17 (persistent/forkable project-scoped chats), T19 (chat-driven structural
+mutations of existing containers), T11 (components model, the keystone),
+T9 (loop-table component), T10 (kanban state editing), T18 (program_id on
+decision-set creates), T7 (triage at scale), T20 steps 3–4 (atomize
+truncation guard / 5.4 escalation — pending what the new diagnostics show).
+
+Post-T13 quick wins shipped 2026-06-07 (same branch): **chat markdown
+rendering** (T14 — escape-first `mdToHtml`, assistant bubbles only);
+**atomize elapsed counter + Cancel** (T12 — the consult-chat busy pattern in
+the triage loading state); **⚙ Settings → Profile** (T15 — header button;
+edits the localStorage narrator identity `throughline:user_name` + optional
+`throughline:user_role`, stored for future prompt seasoning); **atomize
+failure diagnostics + repair parser** (T20 steps 1+2 — `atomizeEntry` returns
+`fail` with WHY it degraded incl. truncated-JSON detection, surfaced in the
+T8 eyebrow + server warn-log; the gate's balanced-brace+repair parser is now
+also in `shared/atomize.js`'s `parseModelJson`).
+
+## SHIPPED — Copilot ingestion v2: "decisions back in"
+
+**Goal:** close the loop — braindump → atomize draft → "Chat about this" bundle
+→ Copilot consult → decision-set prompt → **📋 Paste from Copilot** → gate →
+decisions-mode review overlay → commit to state.json. Plan file:
+`~/.claude/plans/zesty-forging-fox.md`. Spec: `copilot-ingestion-spec.md`
+(§4 as-built note + §7b probe-2 guardrails + §8 v2 status).
+
+**Locked decisions:** (1) program-targeted atoms remap to the only child
+project else null+warning (programs hold no atoms — the prompt tells Copilot);
+(2) NOTHING auto-applies — all writes happen in commitTriage on user commit
+(pending containers materialize there, only if referenced); (3) paste field is
+the primary inbound channel, freetext degrades to the atomize path.
+
+**Shipped (commits 1–6 on `copilot-ingestion`):**
+`suggested_target` in proposed{}; `DECISION_PROMPT(userName)` + one-time
+identity (`localStorage throughline:user_name`); **`public/gate.js`** (pure
+ESM, mirrors ingest.js; `test/gate.test.mjs` covers every probe-2 guardrail);
+the pending-export stash (`localStorage throughline:pending_ingest:<sid>`,
+keep-5, deleted on commit; pairs a pasted decision set with its bundle —
+accept verdicts have no body); the intake modal + three-grade routing; the
+decisions-mode triage overlay (warnings strip, dropped/unaddressed strips,
+`__pending__:<pid>` commit-time container creation in a commitTriage
+pre-pass). Headless-verified via the temp-hook pattern (hooks removed).
+
+**Deferred (still v2 or later):** gpt-5.4 repair pass, SheetJS source_ref
+bounds-check, `atom.source_ref` persistence, committed-state edits (E3.5),
+components model (E3.1 — see VISION.md Epic E3).
+
+**WHERE WE LEFT OFF:** acceptance run round 1 found an intake bug — the pasted
+decision set failed strict JSON.parse and fell through to the freetext path
+(garbage Inbox entry titled "{", which the user should delete). FIXED
+(2026-06-06 evening): `parseDecisionSet` now does string-aware balanced-brace
+candidate extraction (longest first) + a pure-code repair pass (trailing
+commas, smart quotes, BOM/zero-widths) before giving up, and the router never
+entry-ifies JSON-looking input — a still-unparseable paste errors visibly in
+the modal (`looksLikeJson`). Tests pass; the Copilot end-to-end loop was never
+re-verified because round 2 hit the hard refusal that triggered T13 (next
+section) — with the native engine primary, the Copilot loop is now the
+secondary path and gets verified opportunistically, not as a gate.
+
+## T13 SHIPPED + VERIFIED LIVE (2026-06-07) — native consult engine on cdsapi gpt-5.4
+
+**Why (2026-06-06 evening, acceptance run round 2):** in the user's FOURTH
+Copilot session of this iteration loop, the consult prompt worked but the
+decision-set prompt got a hard refusal — "sorry, it looks like I can't chat
+about this. Let's try a different topic." — with no recourse except a new
+chat. Cause unknown (suspects: repeated structured-output prompts reading as
+jailbreak-y, or the braindump's CONTENT — high-dose opioids/benzos/tapering —
+tripping a safety filter on a mechanical-JSON demand). Conclusion: **a
+load-bearing pipeline cannot depend on an engine that refuses unpredictably.**
+Copilot demotes to an OPTIONAL path (still the only reader of OneDrive
+binaries until SheetJS lands); the primary reasoner is **gpt-5.4 via cdsapi**.
+Plan file: `~/.claude/plans/abundant-honking-noodle.md`.
+
+**Shipped on `copilot-ingestion` (tests green — 77/77 after the T20 additions):**
+- **`shared/consult.js`** — `buildConsultPrompt(bundle, messages)` serializes
+  the bundle + FULL turn history into one prompt per round (cdsapi
+  `single_response` is stateless); `consultTurn` calls
+  `llmCall({tier:'escalate', json:false})` → gpt-5.4. **NO heuristic
+  fallback** — it throws on no-model / empty reply / provider error, by
+  design (a silent fallback would reproduce the opaque-refusal problem).
+  The bundle's embedded `_instructions` carries the consult brief, so
+  shared/ never imports public/ingest.js. Tests: `test/consult.test.mjs`.
+- **`json:false` is load-bearing**: the cdsapi seam appends a "raw JSON only /
+  Begin with {" suffix when json=true (the default) — that would corrupt prose
+  turns. ALL consult turns send json:false, including the decision-set turn
+  (DECISION_PROMPT's text demands JSON; `parseDecisionSet` is tolerant). The
+  anthropic provider now also gates its JSON_SYSTEM prompt on the json flag.
+- **`/api/consult` in BOTH backends** (real in the Worker too — same shared
+  code): POST `{bundle, messages}` → `{reply, llm}` (llm =
+  `describeLLM(env,'escalate')`, e.g. "cdsapi · gpt-5.4"); errors 500 with
+  the message. **`server.requestTimeout = 0`** in server.js — Node's 5-min
+  default would kill slow gpt-5.4 turns mid-call.
+- **Chat overlay** — own `#chat-shroud`/`#chat-panel` element (index.html) at
+  **z-index 100**, above `.triage-shroud` (90): the triage draft stays alive
+  underneath; Close returns to it intact. NB the modal shroud is z-70 —
+  nothing stacks above triage except this. Conversation is **ephemeral,
+  in-memory** (`chat` module global; gone on close/reload — deliberate v1).
+- **Flow:** the sidebar's primary **"💬 Chat about this"** → `openConsultChat`
+  → `buildChatBundle()` (the bundle assembly extracted out of the old
+  `chatAboutThis`, now shared) → auto-seeds turn 1 with `OPENING_PROMPT`.
+  Busy = elapsed-seconds ticker + **Cancel** (AbortController; T12 lesson).
+  Errors render as red in-chat rows, transcript intact — visible failure.
+  **"→ Decision set"** sends `DECISION_PROMPT(userName)` flag-scoped
+  (`awaitingDecisionSet` — only THAT turn's reply is parsed) → the reply
+  routes through `parseDecisionSet` → `openDecisionsReview` with the stash
+  built in-memory — the whole v2 gate/review/commit back-half verbatim. The
+  decisions-review eyebrow now names the engine ("cdsapi · gpt-5.4 decision
+  set"; the paste path still says Copilot). The old export path survives as
+  the secondary **"⬇ Export for Copilot"** button; 📋 Paste from Copilot
+  unchanged. Headless-verified (temp-hook pattern, ok/busy/error/decision-set
+  states; hook removed).
+
+**ORANGE LIVE TEST PASSED (2026-06-07) — full loop, first-ever commit through
+the decisions pipeline.** gpt-5.4 processed the real opioid-content braindump
+**without refusing** (the exact Copilot failure mode), on the WORST-case input
+(gpt-mini failed again → 75-atom heuristic mess as the draft). Findings:
+- Consult quality ≈ Copilot's best: identified the one correct program (vs
+  5-6 keyword-matched suggestions), advised repurposing the existing container
+  rather than creating one, called out mis-groupings project-by-project,
+  flagged 3 missed critical legal/procedural actions, and **independently
+  converged on the multi-stream loop-table/modified-kanban again** (third LLM
+  to do so — see T9/T11).
+- Robustness: a deliberately off-topic verbose thank-you turn did NOT derail
+  it — brief acknowledgment, graceful refocus (stateless history resubmit
+  works).
+- Decision set: ~60 s, 46 atoms / 9 actions, ~70/10/20 split across two
+  existing projects + one proposed new container; gate → review → **commit
+  worked as designed**.
+- Para-verified: elapsed counter appreciated ("doesn't seem hung").
+
+**Gaps found in the run became tickets:** T14/T15 + the T12 counter were
+fixed same-day (see "WHERE WE ARE NOW" above); T16–T20 remain open in
+TICKETS.md — async ingestion queue, persistent/forkable chats, `program_id`
+on decision-set creates (the new container landed outside its program),
+chat-driven mutations of existing containers (E3 family), and the gpt-mini
+failure investigation (steps 1+2 of which — diagnostics + repair parser —
+are also already shipped).
+
+Next: sprint retro → TICKETS processing session (T14–T20 above + T7/T9/T10/
+T11/T12/T16) → VISION.md E3 sequence. Deferred from this sprint: transcript
+persistence (subsumed by T17), trimming history for long chats.
 
 ## Vision — `VISION.md` (the next big direction)
 
@@ -73,13 +227,25 @@ deferred V1+ backlog lives in `BUILDPATH.md` §H.)
   `throughline-launcher`, merged to its `main`). **Shipped + live: Noah AND
   Natalia are both onboarded on real orange boxes from this.** See the new
   "Onboarding & distribution" section below.
+- **`main` (current as of 2026-06-06)** — `onboarding-installer` has now been
+  **merged to `main`** (E1.5 shipped), so `main` carries the full stack (V1 +
+  folder-lens + onboarding) plus the Copilot-ingestion design docs. **There is
+  no Cloudflare deploy** — pushing `main` deploys nothing (see Deployment model).
+- `copilot-ingestion` (origin, **the active dev branch**) — branched off `main`.
+  The **ingestion epic, complete and live-verified**: v1 (read-only consult) +
+  v2 (decisions back in: gate + decisions-mode review) + **T13 (native gpt-5.4
+  consult engine — the primary; Copilot demoted to secondary)** + the post-T13
+  quick wins (chat markdown, Settings/Profile, atomize counter + failure
+  diagnostics). **Pushed, NOT merged** — see "WHERE WE ARE NOW" at the top and
+  the "Copilot-assisted ingestion" section below.
 
 Each branch stacks on the previous. Verify what a branch actually adds
 with `git log <parent>..HEAD --oneline` before reading the diff.
-**Guardrail change:** the old "never push" rule is lifted for `folder-lens-mvp`
-**and** `onboarding-installer` (throughline) + `throughline-launcher`/`main`
-(meridian-briefing) — the user asked to push/deploy these to onboard Natalia.
-Still confirm before pushing anything else.
+**Guardrail change:** the old "never push" rule is lifted for `folder-lens-mvp`,
+`onboarding-installer`, **`main`**, and **`copilot-ingestion`** (throughline) +
+`throughline-launcher`/`main` (meridian-briefing) — the user asked to push these.
+Still confirm before pushing anything else. **NB: `copilot-ingestion` is NOT to
+be merged to `main` without the user's review.**
 
 ## Running it / seeing it right now (for a cold start)
 
@@ -260,6 +426,109 @@ when unconfigured, and the wizard **bounces to the dashboard when already config
 a shortcut on Noah's box); `THROUGHLINE_DB` = `…\Throughline\state.json` (the
 ~125 KB real workspace). **The next direction — multi-user "circles" — is paused;
 the full design lives in `VISION.md` §M3.**
+
+## Copilot-assisted ingestion — `copilot-ingestion-spec.md` (active epic, on `copilot-ingestion` branch)
+
+The goal: recover SteadyHand's "brain dump → structured" ingestion, using
+**enterprise Copilot** as the reasoning layer (it can read OneDrive binaries —
+spreadsheets/emails — which the on-network `cdsapi` gpt-5.4/mini pipeline can't).
+**Full design + schemas: `copilot-ingestion-spec.md` (read it first).** Origin of
+the idea: `throughline_copilot_design.md` (Copilot's own draft). The `copilot-probe/`
+folder holds the Mode-B probe (a roster `.xlsx` + prompt) and `copilot_response.txt`
+(Copilot's real reply) that calibrated the design — PASS: Copilot reads binaries and
+returns cell-cited JSON, but `source_ref` is region-accurate not exact-cell, it ignores
+fine fields like `due_date`, and OneDrive *path*-retrieval failed (chat-**attach** works).
+
+Architecture in one line: **two modes** (A = pure text dump; B = doc-grounded
+"what do I do with this spreadsheet") → one **export bundle** out → Copilot →
+**decision set** back → **verify+normalize gate** → the *existing triage overlay*
+(`commitTriage` stays the only writer). Decisions are returned **id-keyed**, not as
+the whole doc, so corruptible substance never leaves Throughline. The gpt-5.4 pass
+is a **field-normalizer + JSON-repair**, not the reasoner. **SheetJS is DECIDED:**
+vendored into the bundle (pure JS, no separate install on orange) for `source_ref`
+bounds-checking — but only needed at v2.
+
+**Phasing (spec §8): v1 read-only consult → v2 decisions-back-in + gate →
+v2.5/T13 native engine → v3 auto-expansion. SheetJS still pending.**
+
+**STATUS — v1 SHIPPED + verified live; v2 CORE SHIPPED; T13 (native gpt-5.4
+consult engine — Copilot demoted to secondary) SHIPPED + VERIFIED LIVE
+2026-06-07 (see the T13 block at the top of this file), tests green (77/77),
+NOT merged.** What v1 added:
+- **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
+  imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
+  `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
+  `versionHash` (FNV-1a over a stable stringify), `assembleBundle`. **`app.js`'s
+  `openActionsOf` now delegates to `openActionsForContainer` here** (one open-action
+  rule for UI + bundle).
+- **`public/app.js`** — a **"💬 Chat about this"** button in the triage sidebar →
+  `chatAboutThis()` builds the `throughline.chat_about_this` bundle (spec §2) and
+  downloads it (`downloadJson`; no server upload). `triage.createdIds` tracks
+  containers made during that triage (they become `p*` and are excluded from
+  `state_summary` to avoid dup). `dominantBoundFileRefs` pulls `file_refs` from the
+  dominant bound target's lens folder (else `[]`). **No new server endpoint; schema
+  stays v3.**
+- **`test/ingest.test.mjs`** (15 tests) + **`copilot-probe/sample-chat-about-this.json`**
+  (a generated example bundle).
+
+**Program-hierarchy gap — FIXED (2026-06-06):** `buildStateSummary` now emits
+`program_id` on every container entry (null = standalone) and `objective`+
+`key_results` (label/current/target/unit, no internal kr ids) on `type:"program"`
+entries, so Copilot can reconstruct program→projects from the flat list. Spec §2
+example updated, test added, sample bundle regenerated with a program in the
+scenario.
+
+**Self-describing bundle — ADDED (2026-06-06), from the first live consult:** the
+user attached a real bundle and asked Copilot "does this look right" → Copilot
+reviewed the JSON *format* (verbose structural praise) instead of consulting on
+the breakdown. Fix (two layers, both in `ingest.js`): every bundle now embeds
+**`_instructions`** (`BUNDLE_INSTRUCTIONS` — role + "do NOT review formatting" +
+the four consult tasks), and `chatAboutThis()` copies **`OPENING_PROMPT`** to the
+clipboard (also shown in the alert; clipboard can fail on http) so the chat opens
+pointed at `_instructions`. `_instructions` is NOT in `version_hash` (boilerplate,
+not draft). Spec §2 records the lesson. **Verified live 2026-06-06** (the
+program-retool consult engaged with the breakdown, not the JSON format).
+
+**Atomize provenance — SHIPPED (2026-06-06, T8):** a 75-atom draft from a real
+8 KB dump was unattributable (model or silent heuristic fallback?). Now:
+`describeLLM(env, tier)` in `shared/llm.js`; both `/api/atomize` handlers attach
+`llm` ("cdsapi · gpt-mini" | null) beside the existing `source`; the triage
+eyebrow reads "draft by cdsapi · gpt-mini" / "heuristic draft — <llm> failed" /
+"heuristic draft (no model configured)"; and the cluster badge says **"keyword
+match:"** instead of "AI suggests:" when the heuristic ran (it previously
+mislabeled keyword matches as AI). Tiering confirmed implemented: atomize = tier
+`reason` (cdsapi→gpt-mini), classify = tier `classify` (→gpt-nano); `LLM_MODEL`
+unset means the tier map applies. Tests: `test/atomize.test.mjs`. **NOTE: this
+slice touches `server.js` — orange preview needs the branch-run flow, not just a
+`public\` copy.** **Verified live 2026-06-06:** the eyebrow exposed that the
+user's preview launch line pointed at the wrong folder (no env → heuristic);
+fixed, cdsapi/gpt-mini confirmed running (~90 s on an 8 KB dump → T12).
+
+**v1 VERIFIED LIVE END-TO-END (2026-06-06):** with cdsapi actually wired (the
+earlier 75-atom mess was the heuristic — the preview launch line had pointed at
+the wrong folder, so no env loaded), gpt-mini produced a dramatically better
+draft on the same 8 KB dump (28 atoms, 5 actions, correct project suggested) and
+the Copilot consult on that bundle was high-utility (split/retype/merge/missing-
+atom critiques, a proposed new project, framework advice that independently
+converged on the E3 loop-table). **Lesson: consult quality gates on draft
+quality** — garbage draft in, format-critique out; decent draft in, real PM
+collaboration out. Caveat: the gpt-mini run took ~90 s with a frozen
+"Atomizing notes…" (ticket T12).
+
+**The next big direction is captured in `VISION.md` Epic E3** (modular project
+components + the three-stage LLM collaborator: consult → structure proposals →
+mutation routing). Tickets T7/T9/T10/T11 hang off it; sprint planning happens at
+the next TICKETS.md processing session.
+
+**Previewing a dev branch on orange (how the user tests):** the running app is the
+installed copy at `%USERPROFILE%\throughline` served by the **`ThroughlineServer`**
+logon scheduled task on `:8787`; it is a *separate folder* from the user's GitHub
+Desktop checkout, and the meridian-briefing install/update tile pulls *published
+releases*, not branches. To preview a branch: `schtasks /End /TN "ThroughlineServer"`
+(+ free port 8787), then from the checkout run
+`node --env-file="$env:USERPROFILE\throughline\.env" server.js` (reuses the real
+shared-OneDrive `.env`); Ctrl+C + `schtasks /Run /TN "ThroughlineServer"` to restore.
+v1 was front-end-only so copying `public\` over the install also works.
 
 ## AI ingestion seam (stub today)
 

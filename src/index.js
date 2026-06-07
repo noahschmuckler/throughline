@@ -8,7 +8,8 @@
 
 import { atomizeEntry } from '../shared/atomize.js';
 import { classifyProject } from '../shared/classify.js';
-import { makeLLMCall } from '../shared/llm.js';
+import { consultTurn } from '../shared/consult.js';
+import { makeLLMCall, describeLLM } from '../shared/llm.js';
 
 const KV_KEY = 'throughline:state';
 
@@ -91,7 +92,11 @@ async function handleAtomizeRequest(request, env) {
   try {
     const llmCall = makeLLMCall(env);
     const result = await atomizeEntry(entry, { projects, llmCall });
-    return json(result);
+    // llm = the model the provider WOULD use (null = heuristic-only config);
+    // result.source says whether it actually produced this draft (T8);
+    // result.fail says WHY the model path degraded, when it did (T20).
+    if (result.fail) console.warn(`[atomize] model path degraded to heuristic: ${result.fail}`);
+    return json({ ...result, llm: describeLLM(env, 'reason') });
   } catch (err) {
     return json({ error: err.message }, { status: 500 });
   }
@@ -121,6 +126,34 @@ async function handleClassifyRequest(request, env) {
   }
 }
 
+// Native consult chat (T13): bundle + message history → one stateless
+// tier-`escalate` turn. NO fallback — errors surface to the chat UI.
+async function handleConsultRequest(request, env) {
+  // GET = engine info only (T25): lets the chat header name the model before
+  // the first reply. Provider-agnostic — whatever the escalate tier maps to.
+  if (request.method === 'GET') {
+    return json({ llm: describeLLM(env, 'escalate') });
+  }
+  if (request.method !== 'POST') {
+    return json({ error: `${request.method} not allowed` }, { status: 405 });
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'invalid JSON' }, { status: 400 });
+  }
+  const bundle = body?.bundle && typeof body.bundle === 'object' ? body.bundle : {};
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  try {
+    const llmCall = makeLLMCall(env);
+    const { reply } = await consultTurn(bundle, messages, { llmCall });
+    return json({ reply, llm: describeLLM(env, 'escalate') });
+  } catch (err) {
+    return json({ error: err.message }, { status: 500 });
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -132,6 +165,9 @@ export default {
     }
     if (url.pathname === '/api/classify') {
       return handleClassifyRequest(request, env);
+    }
+    if (url.pathname === '/api/consult') {
+      return handleConsultRequest(request, env);
     }
     // Attachments are a local (Node/orange) capability — the cloud demo has no
     // file store. Keep the route present (identical contract) but say so clearly
