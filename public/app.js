@@ -168,6 +168,57 @@ function escHtml(s) {
   }[c]));
 }
 
+// Minimal markdown → HTML for consult-chat assistant bubbles (T14). Escape-
+// first by construction (everything passes through escHtml before any tag is
+// emitted), so model output can never inject markup. Covers what gpt-5.4
+// actually sends: headings, bold/italic, inline + fenced code, lists, rules.
+function mdInline(s) {
+  return s
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+}
+function mdToHtml(src) {
+  const lines = escHtml(src).split(/\r?\n/);
+  const out = [];
+  let list = null;   // 'ul' | 'ol' currently open
+  let para = [];     // pending paragraph lines
+  let code = null;   // lines inside an open ``` fence
+  const flushPara = () => { if (para.length) { out.push(`<p>${mdInline(para.join('<br>'))}</p>`); para = []; } };
+  const flushList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of lines) {
+    if (code !== null) {
+      if (/^```/.test(line.trim())) { out.push(`<pre><code>${code.join('\n')}</code></pre>`); code = null; }
+      else code.push(line);
+      continue;
+    }
+    const t = line.trim();
+    if (/^```/.test(t)) { flushPara(); flushList(); code = []; continue; }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { flushPara(); flushList(); out.push('<hr>'); continue; }
+    const h = t.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushPara(); flushList();
+      const n = Math.min(h[1].length + 2, 6); // bubble-sized: # → h3, ## → h4 …
+      out.push(`<h${n}>${mdInline(h[2])}</h${n}>`);
+      continue;
+    }
+    const ul = t.match(/^[-*•]\s+(.*)$/);
+    const ol = t.match(/^\d+[.)]\s+(.*)$/);
+    if (ul || ol) {
+      flushPara();
+      const want = ul ? 'ul' : 'ol';
+      if (list !== want) { flushList(); out.push(`<${want}>`); list = want; }
+      out.push(`<li>${mdInline((ul || ol)[1])}</li>`);
+      continue;
+    }
+    if (!t) { flushPara(); flushList(); continue; }
+    para.push(t);
+  }
+  if (code) out.push(`<pre><code>${code.join('\n')}</code></pre>`); // unclosed fence
+  flushPara(); flushList();
+  return out.join('');
+}
+
 function tmpl(id) {
   return document.getElementById(id).content.cloneNode(true);
 }
@@ -3404,7 +3455,18 @@ async function openTriageModal(entryId) {
   const panel = document.getElementById('triage');
   shroud.hidden = false;
   shroud.onclick = (ev) => { if (ev.target === shroud) closeTriage(); };
-  panel.innerHTML = `<div class="triage-loading">Atomizing notes…</div>`;
+  // T12: model runs on a big entry can take a minute+ — show a live elapsed
+  // counter + Cancel (same pattern as the consult chat) instead of freezing.
+  panel.innerHTML = `<div class="triage-loading">Atomizing notes… <span id="atomize-elapsed">0</span>s
+    <div class="muted small" style="margin-top:6px">Model runs can take a minute or two on large entries.</div>
+    <button class="btn" data-act="t-cancel" style="margin-top:10px">Cancel</button></div>`;
+  const abort = new AbortController();
+  const ticker = setInterval(() => {
+    const el = document.getElementById('atomize-elapsed');
+    if (el) el.textContent = String(Number(el.textContent) + 1);
+    else clearInterval(ticker); // overlay replaced/closed
+  }, 1000);
+  panel.querySelector('[data-act="t-cancel"]').onclick = () => abort.abort();
 
   const projList = projects().map(p => ({ id: p.id, title: p.title, tags: p.tags || [], goal_or_purpose: p.goal_or_purpose || '' }));
 
@@ -3417,14 +3479,18 @@ async function openTriageModal(entryId) {
         entry: { title: entry.title, notes: entry.notes, occurred_at: entry.occurred_at, participants: entry.participants || [] },
         projects: projList,
       }),
+      signal: abort.signal,
     });
     if (!r.ok) throw new Error(`atomize ${r.status}`);
     data = await r.json();
   } catch (err) {
+    clearInterval(ticker);
+    if (err.name === 'AbortError') { closeTriage(); return; } // user cancelled
     panel.innerHTML = `<div class="triage-loading">Atomize failed: ${escHtml(err.message)}<br/><button class="btn" data-act="t-close">Close</button></div>`;
     panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
     return;
   }
+  clearInterval(ticker);
 
   triage = {
     entryId,
@@ -3865,6 +3931,42 @@ function getUserName() {
   return asked;
 }
 
+// Settings → Profile (T15). The narrator identity above was previously
+// write-once via prompt(); this is the editable surface for it, plus an
+// optional role blurb (stored now, seasoned into consult prompts later).
+// Per-browser localStorage on purpose — real multi-user identity is E2/§M3.
+function openSettingsModal() {
+  let name = '', role = '';
+  try { name = localStorage.getItem('throughline:user_name') || ''; } catch { /* storage unavailable */ }
+  try { role = localStorage.getItem('throughline:user_role') || ''; } catch { /* storage unavailable */ }
+  openModal(`
+    <h2>Settings</h2>
+    <label class="field">
+      <span class="label">My name is</span>
+      <input type="text" id="set-name" value="${escHtml(name)}" placeholder="e.g. Noah Schmuckler" />
+    </label>
+    <p class="muted small">Used to attribute "I'll…" commitments when a consult turns your words into
+    actions — make it match the name you assign actions to. Stored in this browser only.</p>
+    <label class="field">
+      <span class="label">Role (optional)</span>
+      <input type="text" id="set-role" value="${escHtml(role)}" placeholder="e.g. Program manager, IMFM Provider Corner" />
+    </label>
+    <div class="modal-actions">
+      <button class="btn" data-act="set-cancel">Cancel</button>
+      <button class="btn primary" data-act="set-save">Save</button>
+    </div>
+  `, (modal) => {
+    modal.querySelector('[data-act="set-cancel"]').onclick = closeModal;
+    modal.querySelector('[data-act="set-save"]').onclick = () => {
+      try {
+        localStorage.setItem('throughline:user_name', modal.querySelector('#set-name').value.trim());
+        localStorage.setItem('throughline:user_role', modal.querySelector('#set-role').value.trim());
+      } catch { /* storage unavailable */ }
+      closeModal();
+    };
+  });
+}
+
 function downloadJson(obj, filename) {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -4014,7 +4116,9 @@ function renderConsultChat() {
   if (!chat) return;
   const panel = document.getElementById('chat-panel');
   const msgs = chat.messages.map(m =>
-    `<div class="chat-msg ${m.role === 'assistant' ? 'assistant' : m.role === 'error' ? 'error' : 'user'}">${escHtml(m.content)}</div>`
+    m.role === 'assistant'
+      ? `<div class="chat-msg assistant md">${mdToHtml(m.content)}</div>` // model replies are markdown (T14)
+      : `<div class="chat-msg ${m.role === 'error' ? 'error' : 'user'}">${escHtml(m.content)}</div>`
   ).join('');
   const busy = chat.busy
     ? `<div class="chat-busy" id="chat-busy">Consulting ${escHtml(chat.llm || '…')} — <span id="chat-elapsed">${chat.elapsed}</span>s
@@ -4344,6 +4448,7 @@ function openDecisionsReview(stash, decisions, { engine = null } = {}) {
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     meta.textContent = `Dyad workspace · ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
   }
+  document.getElementById('hdr-settings')?.addEventListener('click', openSettingsModal);
   await loadState();
   await maybeRedirectToSetup();
   render();
