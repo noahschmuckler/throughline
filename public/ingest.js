@@ -71,6 +71,22 @@ export function DECISION_PROMPT(userName) {
   );
 }
 
+// T26: the "↩ back to chat" retarget note. The user's manual re-filings in
+// the review overlay become ONE visible, human-prose user turn so the model
+// revises with knowledge of what's already been fixed by hand (the provider
+// is stateless and re-reads the whole history anyway — a visible turn beats
+// a hidden side-channel, and it survives reload inside the session).
+// moves: [{ body, from, to }] with from/to already human-readable titles.
+export function reviewCorrectionsNote(moves = []) {
+  if (!moves.length) return '';
+  const MAX = 8;
+  const trunc = (s, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+  const lines = moves.slice(0, MAX).map(m => `moved "${trunc(String(m.body || ''))}" from ${m.from} → ${m.to}`);
+  const extra = moves.length > MAX ? `; …and ${moves.length - MAX} more` : '';
+  return `[from review] Manual corrections I already made in the review screen: ${lines.join('; ')}${extra}. ` +
+    'Treat these as fixed decisions — do not move them back; revise the rest of your recommendations accordingly.';
+}
+
 // Open action atoms in a container: action atoms with no closing outcome.
 // This is the single source for the open-action rule — app.js's openActionsOf()
 // delegates here so the browser UI and the bundle never drift.

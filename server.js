@@ -24,7 +24,7 @@ import { classifyProject } from './shared/classify.js';
 import { consultTurn } from './shared/consult.js';
 import {
   createJob, getJob, listJobs, dismissJob,
-  createSession, getSession, updateSession, appendSessionTurn,
+  createSession, getSession, updateSession, appendSessionTurn, listSessions,
   configureRunner, sweepOnBoot,
 } from './lib/jobs.js';
 import { makeLLMCall, describeLLM } from './shared/llm.js';
@@ -211,6 +211,9 @@ async function handleJobById(req, res, pathname) {
 }
 
 async function handleSessions(req, res) {
+  if (req.method === 'GET') {
+    return sendJson(res, 200, { sessions: await listSessions() });
+  }
   if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
   let body;
   try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }

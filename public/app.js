@@ -7,6 +7,7 @@
 import {
   buildStateSummary, buildProposed, buildNeedsClarification,
   assembleBundle, openActionsForContainer, OPENING_PROMPT, DECISION_PROMPT,
+  reviewCorrectionsNote,
 } from './ingest.js';
 import { parseDecisionSet, isBundle, isDecisionSet, looksLikeJson, resolveDecisions } from './gate.js';
 
@@ -771,13 +772,22 @@ async function renderResults() {
   });
 }
 
-// Sessions surfaced in Results (C7 fills these in; safe no-ops until then).
-async function listConsultSessions() { return []; }
+// Live consult sessions for the Results strip: active/reviewing only, with
+// a _pendingTurn flag when a consult_turn job for the session is in flight.
+async function listConsultSessions() {
+  try {
+    const [sr, jr] = await Promise.all([fetch('/api/sessions'), fetch('/api/jobs?kind=consult_turn')]);
+    if (!sr.ok) return [];
+    const sessions = ((await sr.json()).sessions || []).filter(s => s.status === 'active' || s.status === 'reviewing');
+    const jobs = jr.ok ? ((await jr.json()).jobs || []) : [];
+    const pending = new Set(jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => j.input?.session_id));
+    return sessions.map(s => ({ ...s, _pendingTurn: pending.has(s.id) }));
+  } catch { return []; }
+}
 function sessionTitle(s) {
   const entry = state.entries.find(e => e.id === s.entry_id);
   return entry ? `Consult: ${entry.title || '(untitled)'}` : `Consult ${s.id}`;
 }
-function openConsultSession(_id) { /* C7 */ }
 
 // T22: the next-actions queue — the cross-project "do next" working surface.
 // Atoms flagged via the ☆ queue toggles (drawer, kanban cards, action rail).
@@ -4014,10 +4024,13 @@ function renderTriage() {
         <div class="t-commit">
           <button class="btn primary ${done ? 'ready' : ''}" data-act="t-commit">${done ? '✓ Commit entry' : 'Commit entry →'}</button>
           ${total - assigned ? `<div class="t-commit-hint">${total - assigned} unassigned → stay on this entry</div>` : ''}
+          ${triage.mode === 'decisions' && triage.serverSessionId ? `
+          <button class="btn t-chat-btn" data-act="t-back-to-chat">↩ Back to chat</button>
+          <div class="t-commit-hint">Your manual moves ride along — ask for a revised decision set.</div>` : `
           <button class="btn t-chat-btn" data-act="t-consult">💬 Chat about this</button>
           <div class="t-commit-hint">Native consult — read-only, files nothing.</div>
           <button class="btn t-chat-btn" data-act="t-export">⬇ Export for Copilot</button>
-          <div class="t-commit-hint">Secondary engine — bundle file + paste loop.</div>
+          <div class="t-commit-hint">Secondary engine — bundle file + paste loop.</div>`}
         </div>
       </div>
     </div>`;
@@ -4031,6 +4044,7 @@ function wireTriage() {
   panel.querySelector('[data-act="t-commit"]')?.addEventListener('click', commitTriage);
   panel.querySelector('[data-act="t-consult"]')?.addEventListener('click', openConsultChat);
   panel.querySelector('[data-act="t-export"]')?.addEventListener('click', chatAboutThis);
+  panel.querySelector('[data-act="t-back-to-chat"]')?.addEventListener('click', backToChatFromReview);
 
   panel.querySelectorAll('[data-ttoggle]').forEach(el => {
     el.addEventListener('click', (ev) => {
@@ -4201,6 +4215,13 @@ function commitTriage() {
   scheduleSave();
   // A committed decisions-review consumes its pending export.
   if (triage.mode === 'decisions' && triage.sessionId) deletePendingIngest(triage.sessionId);
+  // T26: a committed session leaves the Results strip (status drives pruning).
+  if (triage.mode === 'decisions' && triage.serverSessionId) {
+    fetch(`/api/sessions/${encodeURIComponent(triage.serverSessionId)}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'committed' }),
+    }).catch(() => {});
+  }
   closeTriage();
   closeDrawer(true);
   location.hash = `#/c/${encodeURIComponent(dominant)}`;
@@ -4430,32 +4451,89 @@ async function dominantBoundFileRefs(draftAtoms) {
 // routes the reply through the existing parseDecisionSet → resolveDecisions →
 // openDecisionsReview back-half, no copy-paste.
 
-let chat = null; // { bundle, entryId, newContainerIds, messages, busy, llm, elapsed, timer, abort, awaitingDecisionSet }
+// chat = thin view over a server session when JOBS_ENABLED (sessionId set):
+// the transcript's source of truth lives in lib/jobs.js and survives reload/
+// navigation (T26); pendingJobId tracks the in-flight consult_turn. With no
+// jobs store (Worker / probe failed) it's the original ephemeral in-memory
+// chat over the synchronous /api/consult.
+let chat = null; // { sessionId?, pendingJobId?, bundle, entryId, newContainerIds, messages, busy, llm, elapsed, timer, abort, awaitingDecisionSet }
 
-async function openConsultChat() {
-  const ctx = await buildChatBundle();
-  if (!ctx) return;
-  chat = {
-    ...ctx,
-    messages: [], busy: false, llm: null,
-    elapsed: 0, timer: null, abort: null, awaitingDecisionSet: false,
-  };
-  const shroud = document.getElementById('chat-shroud');
-  shroud.hidden = false;
-  renderConsultChat();
+function chatProbeEngine() {
   // Name the engine in the header from the start (T25) — don't wait for the
   // first reply. Reply-time `llm` still wins (it reflects what actually ran).
   fetch('/api/consult').then(r => r.json()).then(d => {
     if (chat && !chat.llm && d.llm) { chat.llm = d.llm; renderConsultChat(); }
   }).catch(() => { /* header just says "native model" until a reply */ });
+}
+
+async function openConsultChat() {
+  const ctx = await buildChatBundle();
+  if (!ctx) return;
+  let sessionId = null;
+  if (JOBS_ENABLED) {
+    try {
+      const r = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ entry_id: ctx.entryId, new_container_ids: ctx.newContainerIds, bundle: ctx.bundle }),
+      });
+      if (r.ok) sessionId = (await r.json()).session.id;
+    } catch { /* fall back to ephemeral */ }
+  }
+  chat = {
+    ...ctx, sessionId, pendingJobId: null,
+    messages: [], busy: false, llm: null,
+    elapsed: 0, timer: null, abort: null, awaitingDecisionSet: false,
+  };
+  document.getElementById('chat-shroud').hidden = false;
+  renderConsultChat();
+  chatProbeEngine();
   // Seed turn 1 with the opening ask so the model engages with the bundle's
   // _instructions immediately (the first live Copilot consult showed a bare
   // "does this look right?" gets a JSON-format critique instead).
   sendConsultTurn(OPENING_PROMPT);
 }
 
+// Reopen a persisted session (Results strip, or "↩ back to chat" from the
+// review). Rebuilds the chat view from the server transcript and re-attaches
+// to any in-flight turn.
+async function openConsultSession(sessionId) {
+  let session;
+  try {
+    const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    if (!r.ok) { alert('That consult session is no longer available.'); return; }
+    session = (await r.json()).session;
+  } catch { return; }
+  chat = {
+    sessionId: session.id, pendingJobId: null,
+    bundle: session.bundle, entryId: session.entry_id, newContainerIds: session.new_container_ids || [],
+    messages: (session.messages || []).map(m => ({ role: m.role, content: m.content })),
+    busy: false, llm: null, elapsed: 0, timer: null, abort: null, awaitingDecisionSet: false,
+  };
+  document.getElementById('chat-shroud').hidden = false;
+  renderConsultChat();
+  chatProbeEngine();
+  // An in-flight turn from before the navigate-away? Re-attach to it.
+  try {
+    const r = await fetch('/api/jobs?kind=consult_turn');
+    if (r.ok) {
+      const live = ((await r.json()).jobs || []).find(j =>
+        j.input?.session_id === session.id && (j.status === 'queued' || j.status === 'running'));
+      if (live && chat?.sessionId === session.id) {
+        chat.busy = true;
+        chat.pendingJobId = live.id;
+        chat.awaitingDecisionSet = !!live.input?.awaiting_decision_set;
+        startChatTicker();
+        renderConsultChat();
+        pollConsultJob(live.id);
+      }
+    }
+  } catch { /* idle view is fine */ }
+}
+
 function closeConsultChat() {
-  if (chat?.abort) chat.abort.abort();
+  if (chat?.abort) chat.abort.abort();           // sync mode: abort the fetch
+  if (chat?.pendingJobId) stopPoll(`cjob:${chat.pendingJobId}`); // session mode: detach — the job finishes server-side and lands in Results
   if (chat?.timer) clearInterval(chat.timer);
   chat = null;
   document.getElementById('chat-shroud').hidden = true;
@@ -4472,7 +4550,7 @@ function renderConsultChat() {
   ).join('');
   const busy = chat.busy
     ? `<div class="chat-busy" id="chat-busy">Consulting ${escHtml(chat.llm || '…')} — <span id="chat-elapsed">${chat.elapsed}</span>s
-         <button class="btn" data-act="chat-cancel">Cancel</button></div>`
+         <button class="btn" data-act="chat-cancel" title="${chat.sessionId ? 'The turn keeps running on the server — find it in Results on the dashboard' : 'Abort this turn'}">${chat.sessionId ? '⏏ Background' : 'Cancel'}</button></div>`
     : '';
   panel.innerHTML = `
     <div class="chat-head">
@@ -4507,29 +4585,98 @@ function renderConsultChat() {
   });
   panel.querySelector('[data-act="chat-decisions"]')?.addEventListener('click', requestDecisionSet);
   panel.querySelector('[data-act="chat-cancel"]')?.addEventListener('click', () => {
-    chat?.abort?.abort();
+    if (chat?.sessionId) closeConsultChat(); // detach — job lands in Results
+    else chat?.abort?.abort();
   });
   const list = panel.querySelector('#chat-msgs');
   if (list) list.scrollTop = list.scrollHeight;
 }
 
-async function sendConsultTurn(content) {
-  if (!chat || chat.busy) return;
-  chat.messages.push({ role: 'user', content });
-  chat.busy = true;
+function startChatTicker() {
   chat.elapsed = 0;
-  chat.abort = new AbortController();
-  // gpt-5.4 is SLOW (T12: gpt-mini alone took ~90 s on an 8 KB dump) — show
-  // a live elapsed counter + Cancel instead of a frozen overlay.
   chat.timer = setInterval(() => {
     if (!chat) return;
     chat.elapsed++;
     const el = document.getElementById('chat-elapsed');
     if (el) el.textContent = chat.elapsed;
   }, 1000);
+}
+
+// Session mode: poll the consult_turn job until terminal, then sync the
+// transcript from the session (the runner appended the assistant turn there).
+function pollConsultJob(jobId) {
+  startPoll(`cjob:${jobId}`, async () => {
+    if (!chat || chat.pendingJobId !== jobId) { stopPoll(`cjob:${jobId}`); return; }
+    try {
+      const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+      if (!r.ok) return;
+      const j = (await r.json()).job;
+      if (!j || (j.status !== 'done' && j.status !== 'error')) return;
+      stopPoll(`cjob:${jobId}`);
+      if (!chat || chat.pendingJobId !== jobId) return; // detached meanwhile
+      finishConsultTurn();
+      chat.pendingJobId = null;
+      const awaiting = chat.awaitingDecisionSet;
+      chat.awaitingDecisionSet = false;
+      if (j.status === 'error') {
+        chat.messages.push({ role: 'error', content: `Consult failed: ${j.error || 'unknown error'}` });
+        renderConsultChat();
+        return;
+      }
+      chat.llm = j.result?.llm || chat.llm;
+      // Re-mirror the transcript from the session — the source of truth.
+      try {
+        const sr = await fetch(`/api/sessions/${encodeURIComponent(chat.sessionId)}`);
+        if (sr.ok) {
+          const s = (await sr.json()).session;
+          chat.messages = (s.messages || []).map(m => ({ role: m.role, content: m.content }));
+        }
+      } catch { /* keep the local mirror */ }
+      if (awaiting) routeDecisionSetReply(j.result?.reply || '');
+      else renderConsultChat();
+    } catch { /* transient poll failure — keep polling */ }
+  }, 2000);
+}
+
+async function sendConsultTurn(content) {
+  if (!chat || chat.busy) return;
+  chat.messages.push({ role: 'user', content });
+  chat.busy = true;
+  // gpt-5.4 is SLOW (T12: gpt-mini alone took ~90 s on an 8 KB dump) — show
+  // a live elapsed counter instead of a frozen overlay.
+  startChatTicker();
   renderConsultChat();
 
   const awaiting = chat.awaitingDecisionSet;
+
+  if (chat.sessionId) {
+    // T16/T26: the turn is a server-side job — closing the chat (or the tab)
+    // detaches; the reply lands on the session and surfaces in Results.
+    try {
+      const r = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'consult_turn',
+          title: sessionTitle({ id: chat.sessionId, entry_id: chat.entryId }),
+          input: { session_id: chat.sessionId, content, awaiting_decision_set: awaiting },
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `jobs ${r.status}`);
+      chat.pendingJobId = data.job.id;
+      pollConsultJob(data.job.id);
+    } catch (err) {
+      finishConsultTurn();
+      chat.awaitingDecisionSet = false;
+      chat.messages.push({ role: 'error', content: `Consult failed: ${err.message}` });
+      renderConsultChat();
+    }
+    return;
+  }
+
+  // Synchronous fallback (no jobs store): the original abortable fetch.
+  chat.abort = new AbortController();
   try {
     const r = await fetch('/api/consult', {
       method: 'POST',
@@ -4586,8 +4733,17 @@ function routeDecisionSetReply(reply) {
   if (obj && isDecisionSet(obj)) {
     const stash = { bundle: chat.bundle, entryId: chat.entryId, newContainerIds: chat.newContainerIds };
     const engine = chat.llm || 'Native consult';
+    const serverSessionId = chat.sessionId || null;
+    if (serverSessionId) {
+      // T26: record the review-able decision set on the session so a later
+      // "↩ back to chat" can diff the user's manual corrections against it.
+      fetch(`/api/sessions/${encodeURIComponent(serverSessionId)}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'reviewing', last_decision_set: obj }),
+      }).catch(() => {});
+    }
     closeConsultChat();
-    openDecisionsReview(stash, obj, { engine });
+    openDecisionsReview(stash, obj, { engine, serverSessionId });
     return;
   }
   chat.messages.push({
@@ -4595,6 +4751,48 @@ function routeDecisionSetReply(reply) {
     content: 'That reply didn\'t parse as a decision set — ask the model to re-emit the complete raw JSON, or click "→ Decision set" again.',
   });
   renderConsultChat();
+}
+
+// ---- T26: review ↔ chat flexing -------------------------------------
+
+// The user's manual re-filings in the review overlay, as human-readable moves.
+function reviewMovesFromTriage() {
+  if (!triage || triage.mode !== 'decisions') return [];
+  const label = (t) => {
+    if (t == null || t === '__none__') return '(unassigned)';
+    if (t === '__inbox__' || t === 'inbox') return 'Inbox';
+    if (typeof t === 'string' && t.startsWith('__pending__:')) {
+      const pc = (triage.pendingCreates || []).find(p => p.pid === t.slice('__pending__:'.length));
+      return pc ? `${pc.title} (new)` : t;
+    }
+    return getContainer(t)?.title || t;
+  };
+  const moves = [];
+  for (const c of triage.clusters) {
+    for (const a of c.atoms) {
+      const cur = triageTarget(c, a.key);
+      if (cur !== c.projectId) moves.push({ body: a.body, from: label(c.projectId), to: label(cur) });
+    }
+  }
+  return moves;
+}
+
+// "↩ Back to chat" from a decisions review that came from a native session:
+// fold the user's manual corrections into the conversation as one visible
+// [from review] turn, reopen the chat, and let a follow-up produce a REVISED
+// decision set that re-enters review.
+async function backToChatFromReview() {
+  const sid = triage?.serverSessionId;
+  if (!sid) return;
+  const note = reviewCorrectionsNote(reviewMovesFromTriage());
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(sid)}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'active', ...(note ? { message: note, review_context: note } : {}) }),
+    });
+  } catch { /* the chat still opens; the note just didn't persist */ }
+  closeTriage();
+  openConsultSession(sid);
 }
 
 // ---------- Paste from Copilot (Copilot-assisted ingestion · v2) -----
@@ -4711,7 +4909,7 @@ function handleCopilotIntake(text, modal) {
 // a decisions-mode triage. NOTHING mutates atom/container state here (the
 // stale-entry fallback may add one entry to hold raw_dump); all real writes
 // happen in commitTriage when the user commits.
-function openDecisionsReview(stash, decisions, { engine = null } = {}) {
+function openDecisionsReview(stash, decisions, { engine = null, serverSessionId = null } = {}) {
   const { bundle, entryId, newContainerIds = [] } = stash;
   const plan = resolveDecisions(bundle, decisions, {
     state,
@@ -4772,6 +4970,7 @@ function openDecisionsReview(stash, decisions, { engine = null } = {}) {
     source: 'decisions',
     llm: null,
     engine, // who produced the decision set (null → 'Copilot', the paste path)
+    serverSessionId, // T26: set when a native consult session backs this review
     mode: 'decisions',
     clusters,
     expanded: {},

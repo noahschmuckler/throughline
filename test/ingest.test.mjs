@@ -252,3 +252,22 @@ test('bundle is self-describing: _instructions brief + opening prompt', () => {
   // _instructions is NOT part of the version hash (it's boilerplate, not draft).
   assert.equal(bundle.version_hash, versionHash({}));
 });
+
+// ---- T26: the back-to-chat retarget note --------------------------------
+
+test('reviewCorrectionsNote: human-prose, capped, empty-safe', async () => {
+  const { reviewCorrectionsNote } = await import('../public/ingest.js');
+  assert.equal(reviewCorrectionsNote([]), '');
+  assert.equal(reviewCorrectionsNote(), '');
+
+  const one = reviewCorrectionsNote([{ body: 'Call legal about the subpoena', from: 'Provider Corner', to: 'Legal Review' }]);
+  assert.match(one, /^\[from review\]/);
+  assert.match(one, /moved "Call legal about the subpoena" from Provider Corner → Legal Review/);
+  assert.match(one, /fixed decisions/);
+
+  // Long bodies truncate; > 8 moves collapse to a count.
+  const many = Array.from({ length: 11 }, (_, i) => ({ body: 'x'.repeat(100), from: 'A', to: `B${i}` }));
+  const note = reviewCorrectionsNote(many);
+  assert.match(note, /…and 3 more/);
+  assert.ok(!note.includes('x'.repeat(100)), 'bodies are truncated');
+});
