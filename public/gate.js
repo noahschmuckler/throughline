@@ -174,11 +174,21 @@ export function resolveDecisions(bundle, decisions, { state = null, userName = '
         warn('container_kind_coerced', `New container ${id} has kind "${v.kind || '?'}" — coerced to reference_file (program creation is E3.4).`, [id]);
         kind = 'reference_file';
       }
+      // program_id (T18): the model may place the new container inside an
+      // existing program. Validate against a real, live program — a bogus or
+      // deleted id warns and the container lands standalone (fix in review).
+      let program_id = null;
+      if (given(v.program_id)) {
+        const prog = containerInfo(String(v.program_id));
+        if (prog && prog.type === 'program' && prog.status !== 'archived') program_id = prog.id;
+        else warn('bad_program', `New container ${id} names program "${v.program_id}" which isn't a live program — created standalone.`, [id]);
+      }
       containerCreates.push({
         pid: id, kind,
         title: String(v.title || v.body || id),
         goal_or_purpose: String(v.goal_or_purpose || v.note || ''),
         framework: kind === 'project' && given(v.framework) ? String(v.framework) : null,
+        program_id,
       });
       newPids.add(id);
       continue;

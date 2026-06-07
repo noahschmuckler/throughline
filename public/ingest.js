@@ -54,7 +54,9 @@ export function DECISION_PROMPT(userName) {
     'and new p… keys for new containers. Each value is a verdict object: a "verb" — one of accept | ' +
     'edit | drop | recategorize | create | merge_into — plus only the fields you are setting: "kind" ' +
     '(observation | decision | action | outcome; containers: project | reference_file), "body" or ' +
-    '"title", "goal_or_purpose" (new containers), "target" (a real container id from state_summary, ' +
+    '"title", "goal_or_purpose" (new containers), "program_id" (new containers only — a real ' +
+    'type:"program" id from state_summary, to place the new project/reference inside that program), ' +
+    '"target" (a real container id from state_summary, ' +
     'one of my p…/n… ids, or "inbox"; for merge_into, the surviving atom id), "framework" (projects ' +
     'only), "assigned_to", "due_date" (YYYY-MM-DD), "source_ref" (quote the raw_dump line that grounds ' +
     'it), "note" (one line of reasoning), "confidence" (0.0–1.0). RULES: programs cannot hold atoms — ' +

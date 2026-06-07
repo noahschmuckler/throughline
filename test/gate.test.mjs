@@ -355,3 +355,24 @@ test('dedup (T21): empty bodies never collapse into each other', () => {
   // a1 and a4 have distinct bodies in the fixture; sanity: nothing collapsed.
   assert.ok(!codes(plan).includes('duplicates_collapsed'));
 });
+
+// ---- T18: program_id on decision-set creates ----------------------------
+
+test('create with program_id (T18): valid live program passes through; bogus warns + nulls', () => {
+  const decisions = {
+    _meta: { session_id: 'ing_2026-06-07_0900', version_hash: 'tl_fixture1' },
+    p5: { verb: 'create', kind: 'project', title: 'Inside multi', program_id: 'prog_multi' },
+    p6: { verb: 'create', kind: 'project', title: 'Bogus parent', program_id: 'nope_123' },
+    p7: { verb: 'create', kind: 'reference_file', title: 'Ref inside', program_id: 'prog_solo' },
+    p8: { verb: 'create', kind: 'project', title: 'Parent is a project', program_id: 'proj_a' },
+  };
+  const plan = resolveDecisions(bundle(), decisions, OPTS);
+  const byPid = Object.fromEntries(plan.containerCreates.map(c => [c.pid, c]));
+  assert.equal(byPid.p5.program_id, 'prog_multi');
+  assert.equal(byPid.p6.program_id, null);
+  assert.equal(byPid.p7.program_id, 'prog_solo'); // references can live in programs too
+  assert.equal(byPid.p8.program_id, null);        // a project is not a program
+  const bad = plan.warnings.filter(w => w.code === 'bad_program');
+  assert.equal(bad.length, 2);
+  assert.ok(bad.some(w => w.ids.includes('p6')) && bad.some(w => w.ids.includes('p8')));
+});

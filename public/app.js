@@ -3847,6 +3847,8 @@ function commitTriage() {
         c.framework = fw;
         c.framework_config = fw ? frameworkConfigFor(fw) : {};
       }
+      // T18: gate-validated parent program (null = standalone).
+      if (pc.program_id && getContainer(pc.program_id)?.type === 'program') c.program_id = pc.program_id;
       state.containers.push(c);
       if (!triage.createdIds.includes(id)) triage.createdIds.push(id);
       realByPid.set(pc.pid, id);
@@ -4445,8 +4447,9 @@ function openDecisionsReview(stash, decisions, { engine = null } = {}) {
     // Cross-program misfiles hide behind a good project NAME (T21) — when the
     // target lives inside a program, say which one so provenance is reviewable.
     const realProg = real && real.program_id ? getContainer(real.program_id) : null;
+    const pendingProg = pendingC?.program_id ? getContainer(pendingC.program_id) : null;
     const name = t === '__none__' ? '⚠ Unassigned / needs attention'
-      : pendingC ? `${pendingC.title} (new ${pendingC.kind === 'project' ? 'project' : 'reference'})`
+      : pendingC ? `${pendingC.title} (new ${pendingC.kind === 'project' ? 'project' : 'reference'}${pendingProg ? ` · in program: ${pendingProg.title}` : ''})`
         : t === 'inbox' ? 'Inbox'
           : (real ? `${real.title}${realProg ? ` · in program: ${realProg.title}` : ''}` : t);
     const projectId = t === '__none__' ? null
