@@ -12,7 +12,7 @@
 // ------------------------------------------------------------------
 
 import { createServer } from 'node:http';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -309,6 +309,20 @@ const server = createServer(async (req, res) => {
 // gpt-5.4 consult turns can outlast Node's 5-minute default requestTimeout
 // (gpt-mini alone took ~90 s on an 8 KB dump — T12); don't kill them mid-call.
 server.requestTimeout = 0;
+
+// T1: THROUGHLINE_DB pointing at a FOLDER (or missing the filename) used to
+// surface as a cryptic EPERM on the first save (rename file→dir). Catch it at
+// boot: auto-append state.json, loudly. dbPath() reads env at call time, so
+// updating process.env is enough — no restart logic needed.
+{
+  const raw = process.env.THROUGHLINE_DB || '';
+  let isDir = /[\\/]\s*$/.test(raw);
+  if (!isDir) { try { isDir = (await stat(dbPath())).isDirectory(); } catch { /* missing file = fine */ } }
+  if (isDir) {
+    process.env.THROUGHLINE_DB = join(dbPath(), 'state.json');
+    console.warn(`[boot] THROUGHLINE_DB pointed at a folder, not a file — using ${dbPath()} instead. Set the full file path in .env to silence this.`);
+  }
+}
 
 server.listen(PORT, HOST, () => {
   console.log(`Throughline server → http://${HOST}:${PORT}`);

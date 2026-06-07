@@ -93,21 +93,26 @@ async function doSave() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(state),
     });
-    if (!r.ok) throw new Error(`save failed: ${r.status}`);
+    if (!r.ok) {
+      // Surface the server's actual error, not a generic hint (T1) — an EPERM
+      // from a OneDrive lock reads very differently from a network drop.
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${r.status}`);
+    }
     lastSavedAt = Date.now();
     setStatus('saved');
   } catch (e) {
     console.error(e);
-    setStatus('error');
+    setStatus('error', e.message);
   }
 }
 
-function setStatus(s) {
+function setStatus(s, detail) {
   const el = document.getElementById('status');
   if (!el) return;
   if (s === 'saving') { el.textContent = 'saving…'; el.dataset.state = 'saving'; }
   else if (s === 'saved') { el.textContent = `saved ${fmtWhen(new Date(lastSavedAt).toISOString())}`; el.dataset.state = 'saved'; }
-  else if (s === 'error') { el.textContent = 'save failed — check connection'; el.dataset.state = 'error'; }
+  else if (s === 'error') { el.textContent = `save failed — ${detail || 'check connection'}`; el.dataset.state = 'error'; el.title = detail || ''; }
   else if (s === 'dirty') { el.textContent = 'editing…'; el.dataset.state = 'dirty'; }
   else { el.textContent = ''; el.dataset.state = ''; }
 }
