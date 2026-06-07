@@ -1449,6 +1449,23 @@ input[type="color"] { height: 34px; padding: 2px; cursor: pointer; }
 .t-commit .t-chat-btn { margin-top: 12px; }
 
 /* ------------------------------------------------------------------ */
+/* Next-actions queue (T22) + queue toggles                            */
+/* ------------------------------------------------------------------ */
+
+.queue-btn { white-space: nowrap; }
+.queue-btn.on { color: var(--a-tone, #8a5a2b); border-color: var(--a-tone, #8a5a2b); font-weight: 600; }
+#next-actions { margin: 6px 0 14px; }
+#next-actions .nq-count { font-size: 0.7rem; font-weight: 700; color: #fff; background: var(--a-tone, #8a5a2b); border-radius: 10px; padding: 1px 8px; vertical-align: 2px; margin-left: 6px; }
+.nq-list { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); overflow: hidden; }
+.nq-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--card-edge); }
+.nq-row:last-child { border-bottom: none; }
+.nq-row:hover { background: var(--rail); }
+.nq-body { font-size: 0.82rem; line-height: 1.35; min-width: 0; }
+.nq-meta { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; font-size: 0.7rem; color: var(--mute); }
+.nq-chip { background: var(--rail); border: 1px solid var(--card-edge); border-radius: 10px; padding: 1px 8px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nq-owner { font-weight: 600; }
+
+/* ------------------------------------------------------------------ */
 /* Consult chat overlay (T13: native gpt-5.4 consult)                  */
 /* Layers above the triage overlay (z 90) — the draft stays underneath. */
 /* ------------------------------------------------------------------ */

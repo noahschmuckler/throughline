@@ -557,7 +557,7 @@ function dashboardSummary() {
     overdue += o.filter(isOverdue).length;
   }
   const nexts = ps.map(c => c.next_meeting).filter(Boolean).sort();
-  return { projectCount: ps.length, open, overdue, nextMeeting: nexts[0] || null };
+  return { projectCount: ps.length, open, overdue, queued: queuedOpenActions().length, nextMeeting: nexts[0] || null };
 }
 
 // ---------- Routing -------------------------------------------------
@@ -649,6 +649,7 @@ function renderHomeSub() {
     `${s.open} open`,
   ];
   if (s.overdue) parts.push(`<span class="hdr-warn">${s.overdue} overdue</span>`);
+  if (s.queued) parts.push(`${s.queued} queued`);
   if (s.nextMeeting) parts.push(`next ${fmtDate(s.nextMeeting)}`);
   el.innerHTML = parts.join(' · ');
 
@@ -694,9 +695,51 @@ function renderHomeProjects(body) {
     renderHomeBody();
   };
   renderHomeTagChips();
+  renderNextActions();
   renderProjectGrid();
   renderHomeBody();
   renderRecent();
+}
+
+// T22: the next-actions queue — the cross-project "do next" working surface.
+// Atoms flagged via the ☆ queue toggles (drawer, kanban cards, action rail).
+function renderNextActions() {
+  const host = document.getElementById('next-actions');
+  if (!host) return;
+  const actions = queuedOpenActions();
+  if (!actions.length) { host.innerHTML = ''; return; }
+  const entryById = new Map(state.entries.map(e => [e.id, e]));
+  const rows = actions.map(a => {
+    const entry = entryById.get(a.entry_id);
+    const c = entry ? getContainer(entry.container_id) : null;
+    const prog = c?.program_id ? getContainer(c.program_id) : null;
+    const overdue = isOverdue(a);
+    return `<div class="nq-row" data-entry="${escHtml(a.entry_id)}" data-container="${escHtml(entry?.container_id || '')}" data-atom="${escHtml(a.id)}">
+      <span class="nq-body">${escHtml(a.body)}</span>
+      <span class="nq-meta">
+        ${c ? `<span class="nq-chip">${escHtml(prog ? `${prog.title} › ${c.title}` : c.title)}</span>` : ''}
+        ${a.assigned_to ? `<span class="nq-owner">${escHtml(a.assigned_to)}</span>` : ''}
+        ${a.due_date ? `<span class="due${overdue ? ' overdue' : ''}">${fmtDate(a.due_date)}</span>` : ''}
+        <button class="btn ghost tiny" data-nq-unqueue="${escHtml(a.id)}" title="Remove from the queue">✕</button>
+      </span>
+    </div>`;
+  }).join('');
+  host.innerHTML = `
+    <h2 class="section-rule">▶ Next actions <span class="nq-count">${actions.length}</span></h2>
+    <div class="nq-list">${rows}</div>`;
+  host.querySelectorAll('.nq-row').forEach(row => {
+    row.onclick = (ev) => {
+      if (ev.target.closest('[data-nq-unqueue]')) return;
+      if (row.dataset.container && row.dataset.entry) openEntryDrawer(row.dataset.container, row.dataset.entry, row.dataset.atom);
+    };
+  });
+  host.querySelectorAll('[data-nq-unqueue]').forEach(btn => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      const a = state.atoms.find(x => x.id === btn.dataset.nqUnqueue);
+      if (a) { toggleQueued(a); renderNextActions(); renderHomeSub(); }
+    };
+  });
 }
 
 function renderProjectGrid() {
@@ -1649,6 +1692,7 @@ function renderKanbanBoard(c) {
       <div class="kanban-card-body" data-entry="${a.entry_id}">${escHtml(a.body)}</div>
       ${meta ? `<div class="kanban-card-meta">${escHtml(meta)}</div>` : ''}
       ${moveSelect(a)}
+      ${closed ? '' : `<button class="btn ghost tiny queue-btn${a.queued ? ' on' : ''}" data-kanban-queue="${a.id}">${a.queued ? '★ queued' : '☆ queue'}</button>`}
     </div>`;
   };
   return `<div class="kanban-board">${states.map(s => `
@@ -1865,6 +1909,14 @@ function renderProjectOverview(body, c) {
   body.querySelectorAll('.kanban-card-body[data-entry]').forEach(el => {
     el.onclick = () => openEntryDrawer(c.id, el.dataset.entry);
   });
+  body.querySelectorAll('[data-kanban-queue]').forEach(btn => {
+    btn.onclick = () => {
+      const a = state.atoms.find(x => x.id === btn.dataset.kanbanQueue);
+      if (!a) return;
+      toggleQueued(a);
+      renderProjectOverview(body, c);
+    };
+  });
   // Wire pdsa phase selection.
   body.querySelectorAll('.pdsa-step[data-phase]').forEach(btn => {
     btn.onclick = () => {
@@ -2000,6 +2052,7 @@ function renderRailItem(action) {
     <div class="rail-item-body">${escHtml(action.body)}</div>
     <div class="rail-item-tools">
       <button class="btn tiny" data-act="open-source">Open entry</button>
+      <button class="btn tiny queue-btn${action.queued ? ' on' : ''}" data-act="queue">${action.queued ? '★ queued' : '☆ queue'}</button>
       <button class="btn tiny primary" data-act="close-action">Close…</button>
     </div>
   `;
@@ -2007,6 +2060,13 @@ function renderRailItem(action) {
   div.querySelector('[data-act="open-source"]').onclick = (ev) => {
     ev.stopPropagation();
     if (entry) openEntryDrawer(entry.container_id, entry.id, action.id);
+  };
+  div.querySelector('[data-act="queue"]').onclick = (ev) => {
+    ev.stopPropagation();
+    toggleQueued(action);
+    const btn = ev.currentTarget;
+    btn.classList.toggle('on', !!action.queued);
+    btn.textContent = action.queued ? '★ queued' : '☆ queue';
   };
   div.querySelector('[data-act="close-action"]').onclick = (ev) => {
     ev.stopPropagation();
@@ -2428,6 +2488,7 @@ function renderAtomItem(atom) {
         <input type="date" data-action-field="due_date" value="${escHtml(atom.due_date || '')}" />
         ${closingOutcome ? '<span class="closed-mark">✓ closed</span>' : ''}
         ${overdue ? '<span class="due overdue">overdue</span>' : ''}
+        ${closingOutcome ? '' : `<button class="btn ghost tiny queue-btn${atom.queued ? ' on' : ''}" data-atom-queue title="${atom.queued ? 'Remove from the next-actions queue' : 'Add to the next-actions queue (dashboard)'}">${atom.queued ? '★ queued' : '☆ queue'}</button>`}
       </div>
     `;
     if (closingOutcome) {
@@ -2509,6 +2570,26 @@ function handleAddAtom(row) {
 // assigned_to/due_date, leaving it drops them; gaining 'outcome' seeds
 // parent_atom_id, leaving it drops the link so it no longer closes whatever
 // action it pointed at. Open/closed stays a derived property.
+// T22: flag an action into the dashboard's next-actions queue. A plain flag on
+// the atom (survives both backends untouched); per-user scoping is an M3
+// follow-up. Closed actions drop off the queue view via the open-action rule.
+function toggleQueued(atom) {
+  if (!atom) return;
+  if (atom.queued) delete atom.queued; else atom.queued = true;
+  atom.updated_at = nowIso();
+  scheduleSave();
+}
+
+// Queued OPEN actions across all non-archived containers, overdue/due first.
+function queuedOpenActions() {
+  const archived = new Set(state.containers.filter(c => c.status === 'archived').map(c => c.id));
+  const entryById = new Map(state.entries.map(e => [e.id, e]));
+  return state.atoms
+    .filter(a => a.kind === 'action' && a.queued && !outcomeForAction(a.id))
+    .filter(a => { const e = entryById.get(a.entry_id); return e && !archived.has(e.container_id); })
+    .sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || (b.updated_at || '').localeCompare(a.updated_at || ''));
+}
+
 function changeAtomKind(atom, newKind) {
   if (!atom || atom.kind === newKind) return;
   atom.kind = newKind;
@@ -2578,6 +2659,14 @@ function wireAtomItem(item, entryId) {
     state.atoms = state.atoms.filter(a => a.id !== id);
     scheduleSave();
     renderDrawerInner(entryId);
+  });
+
+  item.querySelector('[data-atom-queue]')?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    toggleQueued(atom);
+    const btn = ev.currentTarget;
+    btn.classList.toggle('on', !!atom.queued);
+    btn.textContent = atom.queued ? '★ queued' : '☆ queue';
   });
 
   item.querySelector('[data-atom-kind]')?.addEventListener('change', (ev) => {
