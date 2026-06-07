@@ -49,7 +49,7 @@ re-verified because round 2 hit the hard refusal that triggered T13 (next
 section) — with the native engine primary, the Copilot loop is now the
 secondary path and gets verified opportunistically, not as a gate.
 
-## T13 SHIPPED (code-complete, awaiting orange live test) — native consult engine on cdsapi gpt-5.4
+## T13 SHIPPED + VERIFIED LIVE (2026-06-07) — native consult engine on cdsapi gpt-5.4
 
 **Why (2026-06-06 evening, acceptance run round 2):** in the user's FOURTH
 Copilot session of this iteration loop, the consult prompt worked but the
@@ -102,22 +102,40 @@ Plan file: `~/.claude/plans/abundant-honking-noodle.md`.
   unchanged. Headless-verified (temp-hook pattern, ok/busy/error/decision-set
   states; hook removed).
 
-**NOT YET DONE — the orange live test (the whole point of the sprint):** the
-dev box can't reach cdsapi, so the open question — does gpt-5.4 have its own
-content filter that trips on the real opioid/benzo braindump? — is unanswered.
-Test via the branch-run preview flow (**this slice touches `server.js`** —
-copying `public\` is NOT enough): real braindump → atomize → 💬 Chat (expect
-SLOW; watch the elapsed counter) → follow-up turn (verifies stateless history)
-→ "→ Decision set" → confirm parseable JSON without refusal → review → commit.
-If it refuses, the error must surface visibly in-chat (that UX is the
-mitigation either way). Also test Cancel mid-consult. Known v1 limits: Cancel
-aborts browser→server only (the server→cdsapi call runs to completion);
-resubmitted history grows each round (bundle + all turns — fine for short
-consults, watch it).
+**ORANGE LIVE TEST PASSED (2026-06-07) — full loop, first-ever commit through
+the decisions pipeline.** gpt-5.4 processed the real opioid-content braindump
+**without refusing** (the exact Copilot failure mode), on the WORST-case input
+(gpt-mini failed again → 75-atom heuristic mess as the draft). Findings:
+- Consult quality ≈ Copilot's best: identified the one correct program (vs
+  5-6 keyword-matched suggestions), advised repurposing the existing container
+  rather than creating one, called out mis-groupings project-by-project,
+  flagged 3 missed critical legal/procedural actions, and **independently
+  converged on the multi-stream loop-table/modified-kanban again** (third LLM
+  to do so — see T9/T11).
+- Robustness: a deliberately off-topic verbose thank-you turn did NOT derail
+  it — brief acknowledgment, graceful refocus (stateless history resubmit
+  works).
+- Decision set: ~60 s, 46 atoms / 9 actions, ~70/10/20 split across two
+  existing projects + one proposed new container; gate → review → **commit
+  worked as designed**.
+- Para-verified: elapsed counter appreciated ("doesn't seem hung").
 
-After the live test passes: sprint retro → VISION.md E3 sequence (components
-model E3.1 etc.). Deferred from this sprint: transcript persistence (stash
-alongside pending_ingest), trimming history for long chats.
+**Gaps found in the run (now tickets — see TICKETS.md):** chat shows raw
+markdown as plain text (T14); narrator name stuck as "Noah" in localStorage
+`throughline:user_name`, no settings UI (T15 — NB it's localStorage, NOT
+.env); atomize popup needs the same elapsed counter (T12 update) and Noah
+wants ingestion server-side + an async results queue so runs survive
+navigation and parallelize (T16); persistent/forkable project-scoped chat
+sessions (T17); decision-set creates can't set `program_id` — the new
+container landed outside its program (T18); no mutations of EXISTING
+containers from chat — framework switch, regrouping, dashboard-level
+consolidation review via approved modification JSON (T19, the E3 family);
+gpt-mini atomize keeps failing on the 8 KB dump → consider tier-escalation
+fallback before heuristic (T20).
+
+Next: sprint retro → TICKETS processing session (T14–T20 above + T7/T9/T10/
+T11/T12/T16) → VISION.md E3 sequence. Deferred from this sprint: transcript
+persistence (subsumed by T17), trimming history for long chats.
 
 ## Vision — `VISION.md` (the next big direction)
 
