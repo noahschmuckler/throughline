@@ -580,6 +580,7 @@ function render() {
   const main = document.getElementById('main');
   main.innerHTML = '';
   const r = currentRoute();
+  if (r.kind !== 'home') stopPoll('results'); // dashboard-only poll (T16)
   if (r.kind === 'setup') {
     renderSetup(main);
   } else if (r.kind === 'home') {
@@ -599,6 +600,10 @@ function render() {
 
 function renderHome(main) {
   main.appendChild(tmpl('tpl-home'));
+
+  // T16: keep the Results strip live while the dashboard is mounted; render()
+  // stops this on route change (one registry — no stray intervals).
+  if (JOBS_ENABLED) startPoll('results', renderResults, 5000);
 
   main.querySelector('[data-act="new-project-guided"]').onclick =
     () => openProjectWizard();
@@ -700,6 +705,79 @@ function renderHomeProjects(body) {
   renderHomeBody();
   renderRecent();
 }
+
+// T16: the Results strip — background ingestion runs land here. Open is
+// re-entrant (a row stays until dismissed); Dismiss = soft-hide server-side.
+async function renderResults() {
+  const host = document.getElementById('home-results');
+  if (!host) return;
+  if (!JOBS_ENABLED) { host.innerHTML = ''; return; }
+  let jobs = [];
+  let sessions = [];
+  try {
+    const r = await fetch('/api/jobs');
+    if (!r.ok) return;
+    jobs = (await r.json()).jobs || [];
+    sessions = await listConsultSessions();
+  } catch { return; }
+  const rows = [];
+  for (const j of jobs.filter(x => x.kind === 'atomize' && !x.dismissed)) {
+    const chip = j.status === 'done' ? '<span class="res-chip ok">✓ draft ready</span>'
+      : j.status === 'error' ? '<span class="res-chip err">⚠ failed</span>'
+        : '<span class="res-chip run">⏳ running</span>';
+    rows.push(`<div class="res-row" data-kind="job" data-id="${escHtml(j.id)}">
+      <span class="res-icon">✦</span>
+      <span class="res-title">${escHtml(j.title || '(untitled)')}</span>
+      <span class="res-meta">${chip}<span class="res-age">${fmtWhen(j.updated_at)}</span>
+        ${j.status !== 'running' && j.status !== 'queued' ? `<button class="btn tiny" data-res-open>Open</button>` : ''}
+        <button class="btn ghost tiny" data-res-dismiss title="Dismiss">✕</button></span>
+    </div>`);
+  }
+  for (const s of sessions) {
+    const pending = s._pendingTurn;
+    const chip = pending ? '<span class="res-chip run">⏳ consulting…</span>'
+      : s.status === 'reviewing' ? '<span class="res-chip ok">✓ review ready</span>'
+        : '<span class="res-chip ok">💬 reply ready</span>';
+    rows.push(`<div class="res-row" data-kind="session" data-id="${escHtml(s.id)}">
+      <span class="res-icon">💬</span>
+      <span class="res-title">${escHtml(sessionTitle(s))}</span>
+      <span class="res-meta">${chip}<span class="res-age">${fmtWhen(s.updated_at)}</span>
+        <button class="btn tiny" data-res-open>Open</button>
+        <button class="btn ghost tiny" data-res-dismiss title="Discard session">✕</button></span>
+    </div>`);
+  }
+  if (!rows.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="res-strip"><div class="res-label">Results</div>${rows.join('')}</div>`;
+  host.querySelectorAll('.res-row').forEach(row => {
+    row.querySelector('[data-res-open]')?.addEventListener('click', async () => {
+      if (row.dataset.kind === 'job') {
+        const r = await fetch(`/api/jobs/${encodeURIComponent(row.dataset.id)}`);
+        if (r.ok) openTriageFromJob((await r.json()).job);
+      } else {
+        openConsultSession(row.dataset.id);
+      }
+    });
+    row.querySelector('[data-res-dismiss]')?.addEventListener('click', async () => {
+      if (row.dataset.kind === 'job') {
+        await fetch(`/api/jobs/${encodeURIComponent(row.dataset.id)}/dismiss`, { method: 'POST' }).catch(() => {});
+      } else {
+        await fetch(`/api/sessions/${encodeURIComponent(row.dataset.id)}`, {
+          method: 'PATCH', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: 'abandoned' }),
+        }).catch(() => {});
+      }
+      renderResults();
+    });
+  });
+}
+
+// Sessions surfaced in Results (C7 fills these in; safe no-ops until then).
+async function listConsultSessions() { return []; }
+function sessionTitle(s) {
+  const entry = state.entries.find(e => e.id === s.entry_id);
+  return entry ? `Consult: ${entry.title || '(untitled)'}` : `Consult ${s.id}`;
+}
+function openConsultSession(_id) { /* C7 */ }
 
 // T22: the next-actions queue — the cross-project "do next" working surface.
 // Atoms flagged via the ☆ queue toggles (drawer, kanban cards, action rail).
@@ -3595,61 +3673,46 @@ function triageProvenance() {
   return 'heuristic draft (no model configured)';
 }
 
-async function openTriageModal(entryId) {
-  const entry = state.entries.find(e => e.id === entryId);
-  if (!entry) return;
-  if (!(entry.notes || '').trim()) {
-    alert('Add some notes first — the atomizer reads the entry notes.');
-    return;
-  }
+// ---------- Async jobs client (T16, Node-only) -----------------------
+// Probed at boot; 501/failed ⇒ everything below falls back to the original
+// synchronous fetches (the Worker contract). One central poll registry so a
+// route change can't leave a stray interval hammering the server.
 
-  const shroud = document.getElementById('triage-shroud');
-  const panel = document.getElementById('triage');
-  shroud.hidden = false;
-  shroud.onclick = (ev) => { if (ev.target === shroud) closeTriage(); };
-  // T12: model runs on a big entry can take a minute+ — show a live elapsed
-  // counter + Cancel (same pattern as the consult chat) instead of freezing.
-  panel.innerHTML = `<div class="triage-loading">Atomizing notes… <span id="atomize-elapsed">0</span>s
-    <div class="muted small" style="margin-top:6px">Model runs can take a minute or two on large entries.</div>
-    <button class="btn" data-act="t-cancel" style="margin-top:10px">Cancel</button></div>`;
-  const abort = new AbortController();
-  const ticker = setInterval(() => {
-    const el = document.getElementById('atomize-elapsed');
-    if (el) el.textContent = String(Number(el.textContent) + 1);
-    else clearInterval(ticker); // overlay replaced/closed
-  }, 1000);
-  panel.querySelector('[data-act="t-cancel"]').onclick = () => abort.abort();
+let JOBS_ENABLED = false;
 
-  const projList = projects().map(p => ({ id: p.id, title: p.title, tags: p.tags || [], goal_or_purpose: p.goal_or_purpose || '' }));
+const _polls = new Map();
+function startPoll(key, fn, ms) {
+  stopPoll(key);
+  _polls.set(key, setInterval(fn, ms));
+  fn(); // immediate first tick — no dead second before feedback
+}
+function stopPoll(key) {
+  const t = _polls.get(key);
+  if (t) clearInterval(t);
+  _polls.delete(key);
+}
 
-  let data;
+async function probeJobs() {
   try {
-    const r = await fetch('/api/atomize', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        entry: { title: entry.title, notes: entry.notes, occurred_at: entry.occurred_at, participants: entry.participants || [] },
-        projects: projList,
-      }),
-      signal: abort.signal,
-    });
-    if (!r.ok) throw new Error(`atomize ${r.status}`);
-    data = await r.json();
-  } catch (err) {
-    clearInterval(ticker);
-    if (err.name === 'AbortError') { closeTriage(); return; } // user cancelled
-    panel.innerHTML = `<div class="triage-loading">Atomize failed: ${escHtml(err.message)}<br/><button class="btn" data-act="t-close">Close</button></div>`;
-    panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
-    return;
-  }
-  clearInterval(ticker);
+    const r = await fetch('/api/jobs');
+    JOBS_ENABLED = r.ok;
+  } catch { JOBS_ENABLED = false; }
+}
+
+const atomizeFailureHtml = (msg, hint) => `<div class="triage-loading">Atomize failed: ${escHtml(msg || 'model error')}<br/>
+  ${hint ? `<span class="muted small">${escHtml(hint)}</span><br/>` : ''}
+  <button class="btn" data-act="t-close" style="margin-top:10px">Close</button></div>`;
+
+// Build + render the triage overlay from an atomize RESULT — the one funnel
+// for the synchronous path, the async job path, and Results-strip reopen, so
+// the overlay is byte-identical regardless of transport (T16).
+function buildTriageFromResult(entryId, data) {
+  const panel = document.getElementById('triage');
 
   // ATOMIZE_ON_FAIL=error (T20): no fallback draft — show the failure and let
   // the user retry, rather than handing them a heuristic spray to clean up.
   if (data.source === 'none') {
-    panel.innerHTML = `<div class="triage-loading">Atomize failed: ${escHtml(data.fail || 'model error')}<br/>
-      <span class="muted small">No draft was produced (fallback is disabled). Re-run Atomize to retry.</span><br/>
-      <button class="btn" data-act="t-close" style="margin-top:10px">Close</button></div>`;
+    panel.innerHTML = atomizeFailureHtml(data.fail, 'No draft was produced (fallback is disabled). Re-run Atomize to retry.');
     panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
     return;
   }
@@ -3672,6 +3735,123 @@ async function openTriageModal(entryId) {
     createdIds: [], // containers created during THIS triage (→ proposed{} in the export bundle)
   };
   renderTriage();
+}
+
+function openTriageShroud() {
+  const shroud = document.getElementById('triage-shroud');
+  shroud.hidden = false;
+  shroud.onclick = (ev) => { if (ev.target === shroud) closeTriage(); };
+  return document.getElementById('triage');
+}
+
+async function openTriageModal(entryId) {
+  const entry = state.entries.find(e => e.id === entryId);
+  if (!entry) return;
+  if (!(entry.notes || '').trim()) {
+    alert('Add some notes first — the atomizer reads the entry notes.');
+    return;
+  }
+  const panel = openTriageShroud();
+  const projList = projects().map(p => ({ id: p.id, title: p.title, tags: p.tags || [], goal_or_purpose: p.goal_or_purpose || '' }));
+  const entrySnapshot = { title: entry.title, notes: entry.notes, occurred_at: entry.occurred_at, participants: entry.participants || [] };
+
+  // T12: model runs on a big entry can take a minute+ — show a live elapsed
+  // counter (same pattern as the consult chat) instead of freezing.
+  const escapeBtn = JOBS_ENABLED
+    ? '<button class="btn" data-act="t-bg" style="margin-top:10px" title="The run continues on the server and lands in Results on the dashboard">⏏ Run in background</button>'
+    : '<button class="btn" data-act="t-cancel" style="margin-top:10px">Cancel</button>';
+  panel.innerHTML = `<div class="triage-loading">Atomizing notes… <span id="atomize-elapsed">0</span>s
+    <div class="muted small" style="margin-top:6px">Model runs can take a minute or two on large entries.</div>
+    ${escapeBtn}</div>`;
+  const ticker = setInterval(() => {
+    const el = document.getElementById('atomize-elapsed');
+    if (el) el.textContent = String(Number(el.textContent) + 1);
+    else clearInterval(ticker); // overlay replaced/closed
+  }, 1000);
+
+  if (JOBS_ENABLED) {
+    // Async path (T16): the run is a server-side job — survive navigation,
+    // run several in parallel, return via the Results strip.
+    let job;
+    try {
+      const r = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'atomize',
+          title: entry.title || '(untitled entry)',
+          input: { entry_id: entryId, entry_snapshot: entrySnapshot, projects: projList },
+        }),
+      });
+      if (!r.ok) throw new Error(`jobs ${r.status}`);
+      job = (await r.json()).job;
+    } catch (err) {
+      clearInterval(ticker);
+      panel.innerHTML = atomizeFailureHtml(err.message);
+      panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
+      return;
+    }
+    const detach = () => { stopPoll(`job:${job.id}`); clearInterval(ticker); };
+    panel.querySelector('[data-act="t-bg"]').onclick = () => { detach(); closeTriage(); };
+    startPoll(`job:${job.id}`, async () => {
+      try {
+        const r = await fetch(`/api/jobs/${encodeURIComponent(job.id)}`);
+        if (!r.ok) return;
+        const j = (await r.json()).job;
+        if (!j || (j.status !== 'done' && j.status !== 'error')) return;
+        detach();
+        if (j.status === 'error') {
+          panel.innerHTML = atomizeFailureHtml(j.error);
+          panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
+          return;
+        }
+        buildTriageFromResult(entryId, j.result || {});
+      } catch { /* transient poll failure — keep polling */ }
+    }, 2000);
+    return;
+  }
+
+  // Synchronous fallback (Worker / no jobs store) — the original path.
+  const abort = new AbortController();
+  panel.querySelector('[data-act="t-cancel"]').onclick = () => abort.abort();
+  let data;
+  try {
+    const r = await fetch('/api/atomize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ entry: entrySnapshot, projects: projList }),
+      signal: abort.signal,
+    });
+    if (!r.ok) throw new Error(`atomize ${r.status}`);
+    data = await r.json();
+  } catch (err) {
+    clearInterval(ticker);
+    if (err.name === 'AbortError') { closeTriage(); return; } // user cancelled
+    panel.innerHTML = atomizeFailureHtml(err.message);
+    panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
+    return;
+  }
+  clearInterval(ticker);
+  buildTriageFromResult(entryId, data);
+}
+
+// Reopen a completed atomize job from the Results strip. If the live entry
+// vanished since submit, re-create it from the job's snapshot (same fallback
+// pattern as openDecisionsReview's entry_recreated).
+function openTriageFromJob(job) {
+  const panel = openTriageShroud();
+  if (job.status === 'error') {
+    panel.innerHTML = atomizeFailureHtml(job.error);
+    panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
+    return;
+  }
+  let entryId = job.input?.entry_id;
+  if (!entryId || !state.entries.some(e => e.id === entryId)) {
+    const snap = job.input?.entry_snapshot || {};
+    const entry = importText(snap.notes || '', { title: snap.title || job.title || 'Recovered entry', open: false });
+    entryId = entry.id;
+  }
+  buildTriageFromResult(entryId, job.result || {});
 }
 
 function closeTriage() {
@@ -4624,6 +4804,7 @@ function openDecisionsReview(stash, decisions, { engine = null } = {}) {
   }
   document.getElementById('hdr-settings')?.addEventListener('click', openSettingsModal);
   await loadState();
+  await probeJobs(); // T16: 200 = async jobs available; 501/fail = sync fallback
   await maybeRedirectToSetup();
   render();
 })();

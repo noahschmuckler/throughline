@@ -1449,6 +1449,24 @@ input[type="color"] { height: 34px; padding: 2px; cursor: pointer; }
 .t-commit .t-chat-btn { margin-top: 12px; }
 
 /* ------------------------------------------------------------------ */
+/* Results strip (T16: background ingestion jobs + consult sessions)   */
+/* ------------------------------------------------------------------ */
+
+#home-results { max-width: var(--maxw); margin: 0 auto; }
+.res-strip { margin: 14px 0 0; background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); overflow: hidden; }
+.res-label { font-size: 0.62rem; letter-spacing: 0.11em; text-transform: uppercase; color: var(--mute); padding: 7px 12px 3px; }
+.res-row { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--card-edge); }
+.res-row:hover { background: var(--rail); }
+.res-icon { flex-shrink: 0; }
+.res-title { flex: 1; min-width: 0; font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.res-meta { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.res-age { font-size: 0.68rem; color: var(--mute); }
+.res-chip { font-size: 0.68rem; font-weight: 600; padding: 1px 8px; border-radius: 10px; }
+.res-chip.ok  { background: var(--u-faint, #e3efe5); color: var(--u-tone, #2e6b3e); }
+.res-chip.err { background: var(--overdue-faint, #f6e3df); color: var(--overdue, #b04a35); }
+.res-chip.run { background: var(--rail); color: var(--mute); }
+
+/* ------------------------------------------------------------------ */
 /* Next-actions queue (T22) + queue toggles                            */
 /* ------------------------------------------------------------------ */
 

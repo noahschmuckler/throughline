@@ -22,6 +22,11 @@ import { setupStatus, listSetupFolder, bindFolder, dbInfo } from './lib/setup.js
 import { atomizeEntry, atomizeOpts } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
 import { consultTurn } from './shared/consult.js';
+import {
+  createJob, getJob, listJobs, dismissJob,
+  createSession, getSession, updateSession, appendSessionTurn,
+  configureRunner, sweepOnBoot,
+} from './lib/jobs.js';
 import { makeLLMCall, describeLLM } from './shared/llm.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -142,6 +147,94 @@ async function handleConsult(req, res) {
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   }
+}
+
+// ---- async jobs + consult sessions (T16/T26, Node-only) -------------
+// Long model runs become machine-local background jobs (lib/jobs.js): the
+// browser submits, polls, navigates away freely; results land in the
+// dashboard's Results strip. The Worker 501s all of this and the front-end
+// falls back to the synchronous /api/atomize + /api/consult paths.
+
+configureRunner({
+  runners: {
+    atomize: async (job) => {
+      const { entry_snapshot = {}, projects = [] } = job.input || {};
+      const opts = atomizeOpts(process.env);
+      const result = await atomizeEntry(entry_snapshot, { projects, llmCall, ...opts });
+      if (result.fail) console.warn(`[jobs] atomize ${job.id}: model path failed: ${result.fail}`);
+      return { ...result, llm: describeLLM(process.env, result.tier || opts.tier) };
+    },
+    consult_turn: async (job, { getSession: getS, appendSessionTurn: appendS }) => {
+      const s = await getS(job.input?.session_id);
+      if (!s) throw new Error('session not found');
+      const { reply } = await consultTurn(s.bundle, s.messages, { llmCall });
+      // Persist the assistant turn on the session — the job result is a copy
+      // (the inbox/chat read the session; the job is the completion signal).
+      await appendS(s.id, 'assistant', reply);
+      return { reply, llm: describeLLM(process.env, 'escalate') };
+    },
+  },
+});
+
+async function handleJobs(req, res, url) {
+  if (req.method === 'GET') {
+    const q = url.searchParams;
+    const jobs = await listJobs({ since: q.get('since'), status: q.get('status'), kind: q.get('kind') });
+    return sendJson(res, 200, { jobs });
+  }
+  if (req.method === 'POST') {
+    let body;
+    try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+    const kind = String(body?.kind || '');
+    if (kind !== 'atomize' && kind !== 'consult_turn') return sendJson(res, 400, { error: `unknown job kind "${kind}"` });
+    try {
+      const job = await createJob({ kind, title: String(body?.title || ''), input: body?.input || {} });
+      return sendJson(res, 201, { job });
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+  }
+  return sendJson(res, 405, { error: `${req.method} not allowed` });
+}
+
+async function handleJobById(req, res, pathname) {
+  const m = pathname.match(/^\/api\/jobs\/([^/]+)(\/dismiss)?$/);
+  if (!m) return sendJson(res, 404, { error: 'not found' });
+  if (m[2]) {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+    const job = await dismissJob(m[1]);
+    return job ? sendJson(res, 200, { job }) : sendJson(res, 404, { error: 'no such job' });
+  }
+  if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  const job = await getJob(m[1]);
+  return job ? sendJson(res, 200, { job }) : sendJson(res, 404, { error: 'no such job' });
+}
+
+async function handleSessions(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  let body;
+  try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+  const session = await createSession({
+    entry_id: body?.entry_id ?? null,
+    new_container_ids: Array.isArray(body?.new_container_ids) ? body.new_container_ids : [],
+    bundle: body?.bundle && typeof body.bundle === 'object' ? body.bundle : {},
+  });
+  return sendJson(res, 201, { session });
+}
+
+async function handleSessionById(req, res, pathname) {
+  const id = decodeURIComponent(pathname.slice('/api/sessions/'.length));
+  if (req.method === 'GET') {
+    const session = await getSession(id);
+    return session ? sendJson(res, 200, { session }) : sendJson(res, 404, { error: 'no such session' });
+  }
+  if (req.method === 'PATCH') {
+    let body;
+    try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+    const session = await updateSession(id, body || {});
+    return session ? sendJson(res, 200, { session }) : sendJson(res, 404, { error: 'no such session' });
+  }
+  return sendJson(res, 405, { error: `${req.method} not allowed` });
 }
 
 // Attachments live in an `attachments/<container_id>/` tree beside the state
@@ -291,6 +384,10 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/api/atomize') return await handleAtomize(req, res);
     if (url.pathname === '/api/classify') return await handleClassify(req, res);
     if (url.pathname === '/api/consult') return await handleConsult(req, res);
+    if (url.pathname === '/api/jobs') return await handleJobs(req, res, url);
+    if (url.pathname.startsWith('/api/jobs/')) return await handleJobById(req, res, url.pathname);
+    if (url.pathname === '/api/sessions') return await handleSessions(req, res);
+    if (url.pathname.startsWith('/api/sessions/')) return await handleSessionById(req, res, url.pathname);
     if (url.pathname === '/api/attachments') return await handleAttachmentUpload(req, res);
     if (url.pathname.startsWith('/api/attachments/')) return await serveAttachment(req, res, url.pathname);
     if (url.pathname === '/api/fs/list') return await handleFsList(req, res, url);
@@ -323,6 +420,10 @@ server.requestTimeout = 0;
     console.warn(`[boot] THROUGHLINE_DB pointed at a folder, not a file — using ${dbPath()} instead. Set the full file path in .env to silence this.`);
   }
 }
+
+// Recover machine-local jobs from a previous process: running → error
+// (the model call died with us), queued → re-scheduled.
+await sweepOnBoot();
 
 server.listen(PORT, HOST, () => {
   console.log(`Throughline server → http://${HOST}:${PORT}`);

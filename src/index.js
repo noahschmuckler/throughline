@@ -181,6 +181,13 @@ export default {
     if (url.pathname === '/api/fs/list' || url.pathname.startsWith('/api/fs/')) {
       return json({ error: 'Folder access is only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
     }
+    // Async jobs + consult sessions (T16/T26) are machine-local Node features —
+    // the front-end probes /api/jobs and falls back to the synchronous
+    // /api/atomize + /api/consult paths when it sees this 501.
+    if (url.pathname === '/api/jobs' || url.pathname.startsWith('/api/jobs/')
+      || url.pathname === '/api/sessions' || url.pathname.startsWith('/api/sessions/')) {
+      return json({ error: 'Async jobs are only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
+    }
     // Everything else: static assets from /public.
     return env.ASSETS.fetch(request);
   },
