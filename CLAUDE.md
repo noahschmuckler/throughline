@@ -10,10 +10,13 @@ Snapshot date: 2026-06-07.
 
 ## WHERE WE ARE NOW (read this first)
 
-**The ingestion epic is SHIPPED and live-verified end-to-end** (v1 consult →
-v2 decisions-back-in → T13 native gpt-5.4 engine — the two sections below).
-**Everything is on `copilot-ingestion`, NOT merged to `main`** (user review
-required before merge). Tests: 77/77 (`node --test test/`).
+**The ingestion epic is SHIPPED, live-verified end-to-end, and MERGED to
+`main`** (2026-06-07, on Noah's authorization; v1 consult → v2
+decisions-back-in → T13 native gpt-5.4 engine — the two sections below).
+Caveat: the FINAL sprint additions (dedup gate, program-grouped pickers,
+back-to-program, engine-name header, T20 diagnostics) were merged **without
+an orange retest** — verify them on the next orange run. Tests: 79/79
+(`node --test test/`).
 
 **There is NO current sprint.** The queued work lives in **`TICKETS.md`**
 (repo root, local-only/gitignored — Noah's review file): Open tickets
@@ -93,7 +96,7 @@ Copilot demotes to an OPTIONAL path (still the only reader of OneDrive
 binaries until SheetJS lands); the primary reasoner is **gpt-5.4 via cdsapi**.
 Plan file: `~/.claude/plans/abundant-honking-noodle.md`.
 
-**Shipped on `copilot-ingestion` (tests green — 77/77 after the T20 additions):**
+**Shipped (now on `main`; tests green — 79/79):**
 - **`shared/consult.js`** — `buildConsultPrompt(bundle, messages)` serializes
   the bundle + FULL turn history into one prompt per round (cdsapi
   `single_response` is stateless); `consultTurn` calls
@@ -185,67 +188,24 @@ until he triggers a *processing session* (triage → prioritize → plan a sprin
 clear). The file's header documents the format and workflow. (The larger
 deferred V1+ backlog lives in `BUILDPATH.md` §H.)
 
-## Branch topology (as of snapshot)
+## Branch topology (as of 2026-06-07 — COLLAPSED)
 
-- `main` (`b1d034e`) — production. Pre-dates the demo seeder and the
-  preview environment.
-- `seed-demo-data` (origin) — unmerged. Adds `scripts/seed.mjs` +
-  `scripts/seed-data.mjs` and the `[env.preview]` block in
-  `wrangler.toml`. PR open at
-  github.com/noahschmuckler/throughline/pull/new/seed-demo-data.
-- `adhoc-inbox` (origin) — unmerged, branched off `seed-demo-data`.
-  Adds the Ad-hoc capture flow, Inbox container, and closed-action
-  display. PR open at
-  github.com/noahschmuckler/throughline/pull/new/adhoc-inbox.
-- `system-ui-and-triage` (origin) — unmerged, branched off
-  `adhoc-inbox`. The big one (V1: programs, PM frameworks, AI shape wizard,
-  RAG, chart atoms). **Now pushed** (`origin/system-ui-and-triage` matches
-  local). It is 4 commits ahead of `adhoc-inbox`:
-  1. dashboard (tile grid + glidepath + People view) + entry triage
-     modal + schema **v2** + the **Node server** backend.
-  2. real atomizer providers — `anthropic` + `cdsapi` (orange).
-  3. reskin to the playground look (navy header, DM fonts) + demo
-     glidepath/owner data.
-  4. ingestion surface — **Import .md / drag-drop** a Markdown file.
-- `folder-lens-mvp` (origin, **current**) — branched off
-  `system-ui-and-triage`. **This is the active branch and the one orange
-  runs.** Pushed to GitHub at the user's request to test on the orange
-  device. Adds, on top of V1:
-  1. **Epic E1 — folder lens** (`lib/files.js`, `/api/fs/list` + `/api/fs/open`,
-     `container.folder`, bind/browse modal, **expandable lazy-loaded file tree**,
-     open-in-native-app). Local-Node only; Worker 501s. See the Folder lens
-     section below.
-  2. **Convert project ⇄ reference file** (both directions, Edit modal).
-  3. **Triage files into reference files** too (not just projects).
-  4. **Atom retype** in the entry drawer (fix the AI's mis-classification).
-  5. **Removed the deprecated copy-attachments UI** (folder lens replaces it).
-- `onboarding-installer` (origin, **current as of 2026-06-05**) — branched off
-  `folder-lens-mvp`. The **distribution + first-run onboarding** epic (E1.5). Adds,
-  on top of folder-lens: the self-downloading PowerShell installer, the in-app
-  **setup wizard** (`lib/setup.js` + `/api/setup/*`), and the **meridian-briefing
-  launcher tile + static install page** (in the *sibling* repo, branch
-  `throughline-launcher`, merged to its `main`). **Shipped + live: Noah AND
-  Natalia are both onboarded on real orange boxes from this.** See the new
-  "Onboarding & distribution" section below.
-- **`main` (current as of 2026-06-06)** — `onboarding-installer` has now been
-  **merged to `main`** (E1.5 shipped), so `main` carries the full stack (V1 +
-  folder-lens + onboarding) plus the Copilot-ingestion design docs. **There is
-  no Cloudflare deploy** — pushing `main` deploys nothing (see Deployment model).
-- `copilot-ingestion` (origin, **the active dev branch**) — branched off `main`.
-  The **ingestion epic, complete and live-verified**: v1 (read-only consult) +
-  v2 (decisions back in: gate + decisions-mode review) + **T13 (native gpt-5.4
-  consult engine — the primary; Copilot demoted to secondary)** + the post-T13
-  quick wins (chat markdown, Settings/Profile, atomize counter + failure
-  diagnostics). **Pushed, NOT merged** — see "WHERE WE ARE NOW" at the top and
-  the "Copilot-assisted ingestion" section below.
+**`main` is the only branch.** On 2026-06-07, at Noah's request, the historic
+branch stack (`seed-demo-data` → `adhoc-inbox` → `system-ui-and-triage` →
+`folder-lens-mvp` → `onboarding-installer` → `copilot-ingestion`) was
+collapsed: every branch was already an ancestor of `main` (or merged then),
+and all were deleted local + remote. `main` now carries the full lineage:
+the demo seeder, the Ad-hoc/Inbox flow, V1 (programs, frameworks, wizard,
+RAG, Node server, cdsapi/anthropic providers, playground reskin, .md
+import), Epic E1 (folder lens, convert project⇄reference, atom retype),
+E1.5 (installer + setup wizard + meridian-briefing launcher tile — live on
+both orange boxes), and the full AI-ingestion epic (v1 consult + v2
+decisions-back-in + T13 native gpt-5.4 engine + the run-feedback fixes).
 
-Each branch stacks on the previous. Verify what a branch actually adds
-with `git log <parent>..HEAD --oneline` before reading the diff.
-**Guardrail change:** the old "never push" rule is lifted for `folder-lens-mvp`,
-`onboarding-installer`, **`main`**, and **`copilot-ingestion`** (throughline) +
-`throughline-launcher`/`main` (meridian-briefing) — the user asked to push these.
-Still confirm before pushing anything else. **NB: `copilot-ingestion` is NOT to
-be merged to `main` without the user's review.**
+**Workflow from here: every new piece of work gets a NEW branch off
+up-to-date `main`**, merged back after Noah's review. Pushing `main` and
+feature branches of this repo is authorized (and `throughline-launcher`/
+`main` in meridian-briefing); `main` deploys nothing (see Deployment model).
 
 ## Running it / seeing it right now (for a cold start)
 
@@ -427,7 +387,7 @@ a shortcut on Noah's box); `THROUGHLINE_DB` = `…\Throughline\state.json` (the
 ~125 KB real workspace). **The next direction — multi-user "circles" — is paused;
 the full design lives in `VISION.md` §M3.**
 
-## Copilot-assisted ingestion — `copilot-ingestion-spec.md` (active epic, on `copilot-ingestion` branch)
+## Copilot-assisted ingestion — `copilot-ingestion-spec.md` (epic complete, merged to `main`)
 
 The goal: recover SteadyHand's "brain dump → structured" ingestion, using
 **enterprise Copilot** as the reasoning layer (it can read OneDrive binaries —
@@ -453,8 +413,8 @@ v2.5/T13 native engine → v3 auto-expansion. SheetJS still pending.**
 
 **STATUS — v1 SHIPPED + verified live; v2 CORE SHIPPED; T13 (native gpt-5.4
 consult engine — Copilot demoted to secondary) SHIPPED + VERIFIED LIVE
-2026-06-07 (see the T13 block at the top of this file), tests green (77/77),
-NOT merged.** What v1 added:
+2026-06-07 (see the T13 block at the top of this file), tests green (79/79),
+MERGED to `main` 2026-06-07.** What v1 added:
 - **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
   imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
   `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
