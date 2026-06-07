@@ -1682,6 +1682,24 @@ function renderPdsaCycle(c) {
   return `<div class="pdsa-cycle">${steps}</div>${facts ? `<div class="pdsa-facts">${facts}</div>` : ''}`;
 }
 
+// Kanban states <-> compact text, one label per line (T10). Ids are preserved
+// by POSITION against the previous states so renaming a column doesn't orphan
+// its cards' workflow_state; extra lines get fresh slugified ids. Cards whose
+// state id disappears entirely are untouched — the board renderer already
+// buckets unknown states into the first column.
+function statesToText(states) {
+  return (states || []).map(s => s.label || s.id || '').join('\n');
+}
+function textToStates(text, prevStates = []) {
+  const used = new Set();
+  return String(text || '').split('\n').map(l => l.trim()).filter(Boolean).map((label, i) => {
+    let id = prevStates[i]?.id || slugify(label).slice(0, 24) || `state_${i}`;
+    while (used.has(id)) id = `${id}_`;
+    used.add(id);
+    return { id, label };
+  });
+}
+
 // Milestones <-> compact text (one per line), mirroring metricsToText/textToMetrics.
 // Line format: `Label | Owner | YYYY-MM-DD | go/no-go criteria | x`  (trailing x = done)
 function milestonesToText(ms) {
@@ -3157,6 +3175,11 @@ function openEditContainerModal(c) {
       <span class="field-hint">One per line: <code>Label | owner | YYYY-MM-DD | criteria | x</code> (trailing <code>x</code> = done). Shown when this project's shape is milestones.</span>
     </label>
     <label class="field">
+      <span class="label">Board columns</span>
+      <textarea id="m-states" class="metrics-input" placeholder="Capture/triage&#10;Waiting on reply&#10;In analysis&#10;Done">${escHtml(statesToText(c.framework_config?.states))}</textarea>
+      <span class="field-hint">One column label per line, in order. Shown when this project's shape is a board (Kanban). Renaming keeps cards in place; cards from a removed column move to the first one.</span>
+    </label>
+    <label class="field">
       <span class="label">Glidepath metrics</span>
       <textarea id="m-metrics" class="metrics-input" placeholder="Label | target | 38,41,44,47 | 5:Protocol updated">${escHtml(metricsToText(c.metrics))}</textarea>
       <span class="field-hint">One series per line: <code>Label | target | comma,data | idx:intervention</code></span>
@@ -3240,6 +3263,12 @@ function openEditContainerModal(c) {
           if (framework === 'milestone') {
             const milestones = textToMilestones(modal.querySelector('#m-milestones').value);
             c.framework_config = { ...(c.framework_config || {}), milestones };
+          }
+          if (framework === 'kanban') {
+            // T10: edited column labels; ids position-matched so cards keep
+            // their workflow_state across renames. Empty field = defaults.
+            const states = textToStates(modal.querySelector('#m-states').value, c.framework_config?.states || []);
+            if (states.length) c.framework_config = { ...(c.framework_config || {}), states };
           }
         } else {
           delete c.framework;
