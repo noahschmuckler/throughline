@@ -44,10 +44,12 @@ decision set failed strict JSON.parse and fell through to the freetext path
 candidate extraction (longest first) + a pure-code repair pass (trailing
 commas, smart quotes, BOM/zero-widths) before giving up, and the router never
 entry-ifies JSON-looking input — a still-unparseable paste errors visibly in
-the modal (`looksLikeJson`). 69/69 green (tests pass; the end-to-end loop is
-NOT yet verified — see below for why).
+the modal (`looksLikeJson`). Tests pass; the Copilot end-to-end loop was never
+re-verified because round 2 hit the hard refusal that triggered T13 (next
+section) — with the native engine primary, the Copilot loop is now the
+secondary path and gets verified opportunistically, not as a gate.
 
-## NEXT SPRINT (user-requested, plan fresh after this context clear) — native consult engine on cdsapi gpt-5.4
+## T13 SHIPPED (code-complete, awaiting orange live test) — native consult engine on cdsapi gpt-5.4
 
 **Why (2026-06-06 evening, acceptance run round 2):** in the user's FOURTH
 Copilot session of this iteration loop, the consult prompt worked but the
@@ -55,46 +57,67 @@ decision-set prompt got a hard refusal — "sorry, it looks like I can't chat
 about this. Let's try a different topic." — with no recourse except a new
 chat. Cause unknown (suspects: repeated structured-output prompts reading as
 jailbreak-y, or the braindump's CONTENT — high-dose opioids/benzos/tapering —
-tripping a safety filter on a mechanical-JSON demand; cheap diagnostic
-someday: same two prompts on a banal topic). Conclusion either way: **a
+tripping a safety filter on a mechanical-JSON demand). Conclusion: **a
 load-bearing pipeline cannot depend on an engine that refuses unpredictably.**
-The user has dozens of programs to process. Copilot demotes to an OPTIONAL
-path (it's still the only reader of OneDrive binaries until SheetJS lands);
-the primary reasoner becomes **gpt-5.4 via cdsapi**.
+Copilot demotes to an OPTIONAL path (still the only reader of OneDrive
+binaries until SheetJS lands); the primary reasoner is **gpt-5.4 via cdsapi**.
+Plan file: `~/.claude/plans/abundant-honking-noodle.md`.
 
-**The architecture already supports this** — bundle → consult → decision set →
-gate → review is engine-agnostic; only the transport changes (no copy-paste:
-the reply pipes STRAIGHT into the existing gate + decisions-mode review).
+**Shipped (commits 7–9 on `copilot-ingestion`, 75/75 tests green):**
+- **`shared/consult.js`** — `buildConsultPrompt(bundle, messages)` serializes
+  the bundle + FULL turn history into one prompt per round (cdsapi
+  `single_response` is stateless); `consultTurn` calls
+  `llmCall({tier:'escalate', json:false})` → gpt-5.4. **NO heuristic
+  fallback** — it throws on no-model / empty reply / provider error, by
+  design (a silent fallback would reproduce the opaque-refusal problem).
+  The bundle's embedded `_instructions` carries the consult brief, so
+  shared/ never imports public/ingest.js. Tests: `test/consult.test.mjs`.
+- **`json:false` is load-bearing**: the cdsapi seam appends a "raw JSON only /
+  Begin with {" suffix when json=true (the default) — that would corrupt prose
+  turns. ALL consult turns send json:false, including the decision-set turn
+  (DECISION_PROMPT's text demands JSON; `parseDecisionSet` is tolerant). The
+  anthropic provider now also gates its JSON_SYSTEM prompt on the json flag.
+- **`/api/consult` in BOTH backends** (real in the Worker too — same shared
+  code): POST `{bundle, messages}` → `{reply, llm}` (llm =
+  `describeLLM(env,'escalate')`, e.g. "cdsapi · gpt-5.4"); errors 500 with
+  the message. **`server.requestTimeout = 0`** in server.js — Node's 5-min
+  default would kill slow gpt-5.4 turns mid-call.
+- **Chat overlay** — own `#chat-shroud`/`#chat-panel` element (index.html) at
+  **z-index 100**, above `.triage-shroud` (90): the triage draft stays alive
+  underneath; Close returns to it intact. NB the modal shroud is z-70 —
+  nothing stacks above triage except this. Conversation is **ephemeral,
+  in-memory** (`chat` module global; gone on close/reload — deliberate v1).
+- **Flow:** the sidebar's primary **"💬 Chat about this"** → `openConsultChat`
+  → `buildChatBundle()` (the bundle assembly extracted out of the old
+  `chatAboutThis`, now shared) → auto-seeds turn 1 with `OPENING_PROMPT`.
+  Busy = elapsed-seconds ticker + **Cancel** (AbortController; T12 lesson).
+  Errors render as red in-chat rows, transcript intact — visible failure.
+  **"→ Decision set"** sends `DECISION_PROMPT(userName)` flag-scoped
+  (`awaitingDecisionSet` — only THAT turn's reply is parsed) → the reply
+  routes through `parseDecisionSet` → `openDecisionsReview` with the stash
+  built in-memory — the whole v2 gate/review/commit back-half verbatim. The
+  decisions-review eyebrow now names the engine ("cdsapi · gpt-5.4 decision
+  set"; the paste path still says Copilot). The old export path survives as
+  the secondary **"⬇ Export for Copilot"** button; 📋 Paste from Copilot
+  unchanged. Headless-verified (temp-hook pattern, ok/busy/error/decision-set
+  states; hook removed).
 
-**Design sketch (validate in plan mode, don't trust blindly):**
-- **Server:** new `/api/consult` in BOTH backends (Worker may 501 like fs/*):
-  body `{bundle, messages:[{role,content}…]}` → build one prompt (cdsapi
-  `single_response` is STATELESS — serialize bundle + full turn history into
-  the user prompt each round; expected history is short, a few turns) →
-  `llmCall({tier:'escalate'})` → **gpt-5.4** (tier map in `shared/llm.js`,
-  already wired, never yet used). Runtime-agnostic prompt-assembly helper in
-  `shared/` or `public/ingest.js` so tests can cover it.
-- **Front-end:** a minimal chat panel (likely launched from the triage
-  sidebar next to "💬 Chat about this", or replacing it as the primary) —
-  message list + input + busy state (gpt-5.4 will be SLOWER than mini; T12
-  latency lessons apply: elapsed indicator + cancel). Seed turn 1 with
-  BUNDLE_INSTRUCTIONS + the bundle (consult). A **"→ Decision set"** button
-  sends DECISION_PROMPT as the next turn and routes the reply through
-  `parseDecisionSet` → `resolveDecisions` → `openDecisionsReview` — the whole
-  v2 back-half reused verbatim. Keep the conversation in memory (maybe stash
-  alongside pending_ingest for resume).
-- **Copilot path stays** as the secondary engine (📋 Paste from Copilot is
-  unchanged); Mode B binaries remain Copilot-only until vendored SheetJS
-  (already DECIDED) lets Throughline extract xlsx → text into the bundle,
-  which would close most of that gap too.
-- **Open questions for the plan:** where the chat UI lives (triage overlay vs
-  own modal/route); token budget for resubmitted history (8 KB dump + 38-
-  container summary + turns — fine for now, watch it); does cdsapi/gpt-5.4
-  have its own content filters (TEST EARLY with the real opioid-content
-  braindump — that's the whole point); persistence of consult transcripts
-  (probably an entry note or nothing, v1 of this = ephemeral).
-- Ticket: **T13** (TICKETS.md). After this ships: sprint retro → VISION.md E3
-  sequence (components model E3.1 etc.).
+**NOT YET DONE — the orange live test (the whole point of the sprint):** the
+dev box can't reach cdsapi, so the open question — does gpt-5.4 have its own
+content filter that trips on the real opioid/benzo braindump? — is unanswered.
+Test via the branch-run preview flow (**this slice touches `server.js`** —
+copying `public\` is NOT enough): real braindump → atomize → 💬 Chat (expect
+SLOW; watch the elapsed counter) → follow-up turn (verifies stateless history)
+→ "→ Decision set" → confirm parseable JSON without refusal → review → commit.
+If it refuses, the error must surface visibly in-chat (that UX is the
+mitigation either way). Also test Cancel mid-consult. Known v1 limits: Cancel
+aborts browser→server only (the server→cdsapi call runs to completion);
+resubmitted history grows each round (bundle + all turns — fine for short
+consults, watch it).
+
+After the live test passes: sprint retro → VISION.md E3 sequence (components
+model E3.1 etc.). Deferred from this sprint: transcript persistence (stash
+alongside pending_ingest), trimming history for long chats.
 
 ## Vision — `VISION.md` (the next big direction)
 
@@ -381,8 +404,9 @@ bounds-checking — but only needed at v2.
 **Phasing (spec §8): v1 read-only consult → v2 decisions-back-in + gate + SheetJS →
 v3 auto-expansion.**
 
-**STATUS — v1 SHIPPED + verified live; v2 CORE SHIPPED (see the CURRENT SPRINT
-block at the top of this file), tests green (67/67), NOT merged.** What v1 added:
+**STATUS — v1 SHIPPED + verified live; v2 CORE SHIPPED; T13 (native gpt-5.4
+consult engine — Copilot demoted to secondary) CODE-COMPLETE (see the T13
+block at the top of this file), tests green (75/75), NOT merged.** What v1 added:
 - **`public/ingest.js`** — pure runtime-agnostic ESM (served at `/ingest.js`,
   imported by `public/app.js` AND `test/ingest.test.mjs`): `buildStateSummary`,
   `buildProposed` (triage draft → bundle-local `p*`/`a*` ids), `buildNeedsClarification`,
