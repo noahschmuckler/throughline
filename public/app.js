@@ -3526,6 +3526,16 @@ async function openTriageModal(entryId) {
   }
   clearInterval(ticker);
 
+  // ATOMIZE_ON_FAIL=error (T20): no fallback draft — show the failure and let
+  // the user retry, rather than handing them a heuristic spray to clean up.
+  if (data.source === 'none') {
+    panel.innerHTML = `<div class="triage-loading">Atomize failed: ${escHtml(data.fail || 'model error')}<br/>
+      <span class="muted small">No draft was produced (fallback is disabled). Re-run Atomize to retry.</span><br/>
+      <button class="btn" data-act="t-close" style="margin-top:10px">Close</button></div>`;
+    panel.querySelector('[data-act="t-close"]').onclick = closeTriage;
+    return;
+  }
+
   triage = {
     entryId,
     source: data.source || 'heuristic',

@@ -6,7 +6,7 @@
 // has two trusted users so we don't need version vectors yet. The Node server
 // (server.js) exposes the same API over a JSON file for orange-device use.
 
-import { atomizeEntry } from '../shared/atomize.js';
+import { atomizeEntry, atomizeOpts } from '../shared/atomize.js';
 import { classifyProject } from '../shared/classify.js';
 import { consultTurn } from '../shared/consult.js';
 import { makeLLMCall, describeLLM } from '../shared/llm.js';
@@ -91,12 +91,12 @@ async function handleAtomizeRequest(request, env) {
   const projects = Array.isArray(body?.projects) ? body.projects : [];
   try {
     const llmCall = makeLLMCall(env);
-    const result = await atomizeEntry(entry, { projects, llmCall });
+    const result = await atomizeEntry(entry, { projects, llmCall, ...atomizeOpts(env) });
     // llm = the model the provider WOULD use (null = heuristic-only config);
     // result.source says whether it actually produced this draft (T8);
     // result.fail says WHY the model path degraded, when it did (T20).
-    if (result.fail) console.warn(`[atomize] model path degraded to heuristic: ${result.fail}`);
-    return json({ ...result, llm: describeLLM(env, 'reason') });
+    if (result.fail) console.warn(`[atomize] model path failed: ${result.fail}`);
+    return json({ ...result, llm: describeLLM(env, result.tier || atomizeOpts(env).tier) });
   } catch (err) {
     return json({ error: err.message }, { status: 500 });
   }

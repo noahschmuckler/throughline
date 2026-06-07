@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { readState, writeState, dbPath } from './lib/store.js';
 import { listFolder, openFile } from './lib/files.js';
 import { setupStatus, listSetupFolder, bindFolder, dbInfo } from './lib/setup.js';
-import { atomizeEntry } from './shared/atomize.js';
+import { atomizeEntry, atomizeOpts } from './shared/atomize.js';
 import { classifyProject } from './shared/classify.js';
 import { consultTurn } from './shared/consult.js';
 import { makeLLMCall, describeLLM } from './shared/llm.js';
@@ -97,12 +97,12 @@ async function handleAtomize(req, res) {
   const entry = body?.entry || {};
   const projects = Array.isArray(body?.projects) ? body.projects : [];
   try {
-    const result = await atomizeEntry(entry, { projects, llmCall });
+    const result = await atomizeEntry(entry, { projects, llmCall, ...atomizeOpts(process.env) });
     // llm = the model the provider WOULD use (null = heuristic-only config);
     // result.source says whether it actually produced this draft (T8);
     // result.fail says WHY the model path degraded, when it did (T20).
-    if (result.fail) console.warn(`[atomize] model path degraded to heuristic: ${result.fail}`);
-    return sendJson(res, 200, { ...result, llm: describeLLM(process.env, 'reason') });
+    if (result.fail) console.warn(`[atomize] model path failed: ${result.fail}`);
+    return sendJson(res, 200, { ...result, llm: describeLLM(process.env, result.tier || atomizeOpts(process.env).tier) });
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
   }

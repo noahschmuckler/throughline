@@ -143,23 +143,30 @@ async function callAnthropic({ apiKey, model, prompt, json = true }) {
 }
 
 // Optum cdsapi — stateless, non-streaming. Reply text lives under one of a few
-// keys; mirror atom_sandbox's tolerant extraction.
+// keys; mirror atom_sandbox's tolerant extraction. Observed live failure mode
+// (T20): the gateway sometimes returns an EMPTY-bodied success after ~60 s on
+// big prompts — fetchRetry treats that as ok, so retry the call once here.
 async function callCdsApi({ url, model, prompt, json }) {
   const user = json
     ? `${prompt}\n\nIMPORTANT: respond with raw JSON only — no prose, no markdown fences. Begin with { and end with }.`
     : prompt;
-  const res = await fetchRetry(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ system: '', user, model, verbose: false }),
-  });
-  const rawText = await res.text();
-  const ctype = res.headers.get('content-type') || '';
-  if (ctype.includes('application/json')) {
-    try {
-      const d = JSON.parse(rawText);
-      return d.response ?? d.reply ?? d.text ?? d.content ?? d.output ?? d.answer ?? rawText;
-    } catch { return rawText; }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetchRetry(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ system: '', user, model, verbose: false }),
+    });
+    const rawText = await res.text();
+    const ctype = res.headers.get('content-type') || '';
+    let reply = rawText;
+    if (ctype.includes('application/json')) {
+      try {
+        const d = JSON.parse(rawText);
+        reply = d.response ?? d.reply ?? d.text ?? d.content ?? d.output ?? d.answer ?? rawText;
+      } catch { /* keep rawText */ }
+    }
+    if (String(reply ?? '').trim()) return reply;
+    if (attempt === 0) console.warn('[llm] cdsapi returned an empty reply — retrying once');
   }
-  return rawText;
+  return ''; // still empty after the retry: callers' empty-reply handling fires
 }

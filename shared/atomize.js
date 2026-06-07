@@ -61,23 +61,45 @@ export function buildAtomizePrompt(entry, { projects = [] } = {}) {
 //   - if `llmCall` is provided: send the prompt, parse the JSON it returns,
 //     and normalize. (TODO(AI): real path.)
 //   - otherwise: run the heuristic stub. Always returns the output contract.
-export async function atomizeEntry(entry, { projects = [], llmCall = null } = {}) {
+// Read the T20 experiment knobs from env (Worker binding or process.env) —
+// shared by both backends so the contract can't drift.
+export function atomizeOpts(env = {}) {
+  const tier = ['classify', 'reason', 'escalate'].includes(env.ATOMIZE_TIER) ? env.ATOMIZE_TIER : 'reason';
+  const onFail = ['heuristic', 'escalate', 'error'].includes(env.ATOMIZE_ON_FAIL) ? env.ATOMIZE_ON_FAIL : 'heuristic';
+  return { tier, onFail };
+}
+
+// Experiment knobs (T20):
+//   tier   — which model tier the draft runs on ('reason' = gpt-mini today;
+//            'escalate' = gpt-5.4 — the "fix this mess at the source" test).
+//   onFail — what happens when the model path produces nothing usable:
+//            'heuristic' (default, today), 'escalate' (one more attempt at
+//            tier escalate, then heuristic), or 'error' (no fallback — the
+//            UI shows the failure; for users who'd rather retry than wade
+//            through a heuristic spray).
+export async function atomizeEntry(entry, { projects = [], llmCall = null, tier = 'reason', onFail = 'heuristic' } = {}) {
   if (llmCall) {
-    // Kept defensive so a bad/empty model response degrades to the heuristic
-    // rather than throwing into the request handler — but the degradation is
-    // no longer silent (T20): `fail` says WHY, for the eyebrow + server log.
-    let fail = null;
-    try {
-      const prompt = buildAtomizePrompt(entry, { projects });
-      const raw = await llmCall({ prompt, tier: 'reason', json: true });
-      const parsed = parseModelJson(raw);
-      if (parsed && Array.isArray(parsed.clusters)) {
-        return { clusters: normalizeClusters(parsed.clusters, projects), source: 'llm' };
+    // Kept defensive so a bad/empty model response degrades rather than
+    // throwing into the request handler — but the degradation is no longer
+    // silent (T20): `fail` says WHY, for the eyebrow + server log.
+    const attempts = [tier];
+    if (onFail === 'escalate' && tier !== 'escalate') attempts.push('escalate');
+    const fails = [];
+    for (const t of attempts) {
+      try {
+        const prompt = buildAtomizePrompt(entry, { projects });
+        const raw = await llmCall({ prompt, tier: t, json: true });
+        const parsed = parseModelJson(raw);
+        if (parsed && Array.isArray(parsed.clusters)) {
+          return { clusters: normalizeClusters(parsed.clusters, projects), source: 'llm', tier: t };
+        }
+        fails.push(`${t}: ${describeParseFailure(raw, parsed)}`);
+      } catch (err) {
+        fails.push(`${t}: ${err?.message || 'unknown error'}`);
       }
-      fail = describeParseFailure(raw, parsed);
-    } catch (err) {
-      fail = err?.message || 'unknown error';
     }
+    const fail = fails.join('; ');
+    if (onFail === 'error') return { clusters: [], source: 'none', fail };
     return { clusters: heuristicClusters(entry, projects), source: 'heuristic', fail };
   }
   return { clusters: heuristicClusters(entry, projects), source: 'heuristic' };

@@ -6,8 +6,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { atomizeEntry } from '../shared/atomize.js';
-import { describeLLM } from '../shared/llm.js';
+import { atomizeEntry, atomizeOpts } from '../shared/atomize.js';
+import { describeLLM, makeLLMCall } from '../shared/llm.js';
 
 const ENTRY = { title: 'Standup', notes: 'Alice to send the report by 2026-06-10. We decided to defer the migration.' };
 const PROJECTS = [{ id: 'c_rep', title: 'Reporting', tags: ['report'], goal_or_purpose: '' }];
@@ -66,7 +66,7 @@ test('atomizeEntry: degraded runs say WHY in `fail`; clean runs have no fail', a
   assert.match(thrown.fail, /gateway timeout/);
 
   const empty = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall: async () => '   ' });
-  assert.equal(empty.fail, 'empty reply');
+  assert.match(empty.fail, /empty reply/); // now tier-prefixed: "reason: empty reply"
 
   const truncated = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall: async () => JSON.stringify(GOOD).slice(0, 40) });
   assert.match(truncated.fail, /truncated/);
@@ -89,4 +89,78 @@ test('describeLLM: provider/tier → descriptor; heuristic-shaped configs → nu
   assert.equal(describeLLM({ LLM_PROVIDER: 'anthropic' }), null); // no key → makeLLMCall returns null too
   assert.equal(describeLLM({}), null);
   assert.equal(describeLLM({ LLM_PROVIDER: 'heuristic' }), null);
+});
+
+// ---- T20 steps 3-4: tier + onFail experiment knobs --------------------
+
+test('atomizeOpts: env validation with safe defaults', () => {
+  assert.deepEqual(atomizeOpts({}), { tier: 'reason', onFail: 'heuristic' });
+  assert.deepEqual(atomizeOpts({ ATOMIZE_TIER: 'escalate', ATOMIZE_ON_FAIL: 'error' }), { tier: 'escalate', onFail: 'error' });
+  assert.deepEqual(atomizeOpts({ ATOMIZE_TIER: 'bogus', ATOMIZE_ON_FAIL: 'bogus' }), { tier: 'reason', onFail: 'heuristic' });
+});
+
+test('atomizeEntry: tier passes through to llmCall; result records it', async () => {
+  let captured = null;
+  const llmCall = async (args) => { captured = args; return JSON.stringify(GOOD); };
+  const r = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall, tier: 'escalate' });
+  assert.equal(captured.tier, 'escalate');
+  assert.equal(r.source, 'llm');
+  assert.equal(r.tier, 'escalate');
+});
+
+test('atomizeEntry: onFail=escalate retries at escalate tier, then heuristic with both fails', async () => {
+  const tiers = [];
+  const llmCall = async ({ tier }) => { tiers.push(tier); throw new Error(`${tier} down`); };
+  const r = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall, onFail: 'escalate' });
+  assert.deepEqual(tiers, ['reason', 'escalate']);
+  assert.equal(r.source, 'heuristic');
+  assert.match(r.fail, /reason: reason down/);
+  assert.match(r.fail, /escalate: escalate down/);
+
+  // Escalate attempt succeeding short-circuits the heuristic.
+  const llmCall2 = async ({ tier }) => tier === 'escalate' ? JSON.stringify(GOOD) : '';
+  const r2 = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall: llmCall2, onFail: 'escalate' });
+  assert.equal(r2.source, 'llm');
+  assert.equal(r2.tier, 'escalate');
+});
+
+test('atomizeEntry: onFail=error returns no draft, visible fail, empty clusters', async () => {
+  const r = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall: async () => '', onFail: 'error' });
+  assert.equal(r.source, 'none');
+  assert.deepEqual(r.clusters, []);
+  assert.match(r.fail, /empty reply/);
+});
+
+// ---- T20 step 3: cdsapi retries once on an empty-bodied success --------
+
+test('callCdsApi (via makeLLMCall): empty reply → one retry; second reply wins', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    const body = calls === 1 ? '' : JSON.stringify({ response: 'second time lucky' });
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const llmCall = makeLLMCall({ LLM_PROVIDER: 'cdsapi' });
+    const reply = await llmCall({ prompt: 'hi', tier: 'reason', json: false });
+    assert.equal(reply, 'second time lucky');
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('callCdsApi: still empty after the retry → empty string (caller handles)', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response('', { status: 200 }); };
+  try {
+    const llmCall = makeLLMCall({ LLM_PROVIDER: 'cdsapi' });
+    const reply = await llmCall({ prompt: 'hi', json: false });
+    assert.equal(String(reply).trim(), '');
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
