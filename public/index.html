@@ -43,6 +43,12 @@
       <div class="triage" id="triage" role="dialog" aria-modal="true" aria-label="Entry triage"></div>
     </div>
 
+    <!-- Consult chat overlay (T13: native gpt-5.4 consult). Layers ABOVE the
+         triage overlay — the triage draft stays alive underneath. -->
+    <div class="chat-shroud" id="chat-shroud" hidden>
+      <div class="chat-panel" id="chat-panel" role="dialog" aria-modal="true" aria-label="Consult chat"></div>
+    </div>
+
     <template id="tpl-home">
       <section class="home">
         <div class="hdr-main">

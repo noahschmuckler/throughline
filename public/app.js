@@ -3386,7 +3386,7 @@ function triageTotals() {
 // no model configured at all. Decisions mode (v2) names the session instead.
 function triageProvenance() {
   if (triage.mode === 'decisions') {
-    return `Copilot decision set · ${triage.sessionId || 'unknown session'}${triage.info?.versionStale ? ' · ⚠ answers an older draft' : ''}`;
+    return `${triage.engine || 'Copilot'} decision set · ${triage.sessionId || 'unknown session'}${triage.info?.versionStale ? ' · ⚠ answers an older draft' : ''}`;
   }
   if (triage.source === 'llm') return `draft by ${triage.llm || 'model'}`;
   return triage.llm ? `heuristic draft — ${triage.llm} failed` : 'heuristic draft (no model configured)';
@@ -3605,8 +3605,10 @@ function renderTriage() {
         <div class="t-commit">
           <button class="btn primary ${done ? 'ready' : ''}" data-act="t-commit">${done ? '✓ Commit entry' : 'Commit entry →'}</button>
           ${total - assigned ? `<div class="t-commit-hint">${total - assigned} unassigned → stay on this entry</div>` : ''}
-          <button class="btn t-chat-btn" data-act="t-chat">💬 Chat about this</button>
-          <div class="t-commit-hint">Export for Copilot — read-only, files nothing.</div>
+          <button class="btn t-chat-btn" data-act="t-consult">💬 Chat about this</button>
+          <div class="t-commit-hint">Native consult — read-only, files nothing.</div>
+          <button class="btn t-chat-btn" data-act="t-export">⬇ Export for Copilot</button>
+          <div class="t-commit-hint">Secondary engine — bundle file + paste loop.</div>
         </div>
       </div>
     </div>`;
@@ -3618,7 +3620,8 @@ function wireTriage() {
   const panel = document.getElementById('triage');
   panel.querySelector('.triage-close')?.addEventListener('click', closeTriage);
   panel.querySelector('[data-act="t-commit"]')?.addEventListener('click', commitTriage);
-  panel.querySelector('[data-act="t-chat"]')?.addEventListener('click', chatAboutThis);
+  panel.querySelector('[data-act="t-consult"]')?.addEventListener('click', openConsultChat);
+  panel.querySelector('[data-act="t-export"]')?.addEventListener('click', chatAboutThis);
 
   panel.querySelectorAll('[data-ttoggle]').forEach(el => {
     el.addEventListener('click', (ev) => {
@@ -3874,10 +3877,14 @@ function downloadJson(obj, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function chatAboutThis() {
-  if (!triage) return;
+// Snapshot the live triage state into the §2 bundle + the context the gate
+// needs later. One builder for BOTH outbound paths: the native consult chat
+// (primary) and the Copilot file export (secondary). Returns null when there
+// is no live triage/entry.
+async function buildChatBundle() {
+  if (!triage) return null;
   const entry = state.entries.find(e => e.id === triage.entryId);
-  if (!entry) return;
+  if (!entry) return null;
 
   // Snapshot the live triage state into a DOM-free draft.
   const draftAtoms = [];
@@ -3908,11 +3915,19 @@ async function chatAboutThis() {
     now: nowIso(),
   });
 
+  return { bundle, entryId: triage.entryId, newContainerIds: newContainers.map(c => c.id) };
+}
+
+async function chatAboutThis() {
+  const ctx = await buildChatBundle();
+  if (!ctx) return;
+  const { bundle, entryId, newContainerIds } = ctx;
+
   downloadJson(bundle, `chat-about-this-${bundle.session_id}.json`);
 
   // Stash the export so a decision set pasted later (even after a reload)
   // pairs back with this bundle — accept verdicts have no body of their own.
-  stashPendingIngest(bundle, triage.entryId, newContainers.map(c => c.id));
+  stashPendingIngest(bundle, entryId, newContainerIds);
 
   // Hand the user the opening ask too — the first live consult showed that a
   // bare "does this look right?" makes Copilot critique the JSON format instead
@@ -3957,6 +3972,175 @@ async function dominantBoundFileRefs(draftAtoms) {
   } catch {
     return [];
   }
+}
+
+// ---------- Native consult chat (T13: /api/consult · gpt-5.4) --------
+// The PRIMARY consult path: an in-app chat over the same bundle, replacing
+// the copy-paste Copilot loop (which hard-refused unpredictably — the export/
+// paste path below survives as the secondary engine). Conversation state is
+// EPHEMERAL — in memory only, gone on close/reload; the triage draft stays
+// alive underneath the overlay. "→ Decision set" sends DECISION_PROMPT and
+// routes the reply through the existing parseDecisionSet → resolveDecisions →
+// openDecisionsReview back-half, no copy-paste.
+
+let chat = null; // { bundle, entryId, newContainerIds, messages, busy, llm, elapsed, timer, abort, awaitingDecisionSet }
+
+async function openConsultChat() {
+  const ctx = await buildChatBundle();
+  if (!ctx) return;
+  chat = {
+    ...ctx,
+    messages: [], busy: false, llm: null,
+    elapsed: 0, timer: null, abort: null, awaitingDecisionSet: false,
+  };
+  const shroud = document.getElementById('chat-shroud');
+  shroud.hidden = false;
+  renderConsultChat();
+  // Seed turn 1 with the opening ask so the model engages with the bundle's
+  // _instructions immediately (the first live Copilot consult showed a bare
+  // "does this look right?" gets a JSON-format critique instead).
+  sendConsultTurn(OPENING_PROMPT);
+}
+
+function closeConsultChat() {
+  if (chat?.abort) chat.abort.abort();
+  if (chat?.timer) clearInterval(chat.timer);
+  chat = null;
+  document.getElementById('chat-shroud').hidden = true;
+  // The triage overlay (and draft) underneath is untouched.
+}
+
+function renderConsultChat() {
+  if (!chat) return;
+  const panel = document.getElementById('chat-panel');
+  const msgs = chat.messages.map(m =>
+    `<div class="chat-msg ${m.role === 'assistant' ? 'assistant' : m.role === 'error' ? 'error' : 'user'}">${escHtml(m.content)}</div>`
+  ).join('');
+  const busy = chat.busy
+    ? `<div class="chat-busy" id="chat-busy">Consulting ${escHtml(chat.llm || '…')} — <span id="chat-elapsed">${chat.elapsed}</span>s
+         <button class="btn" data-act="chat-cancel">Cancel</button></div>`
+    : '';
+  panel.innerHTML = `
+    <div class="chat-head">
+      <div>
+        <div class="t-eyebrow">Consult — ${escHtml(chat.llm || 'native model')}</div>
+        <div class="chat-title">Chat about this entry</div>
+      </div>
+      <button class="chat-close" aria-label="Close">×</button>
+    </div>
+    <div class="chat-msgs" id="chat-msgs">${msgs}${busy}</div>
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="2" placeholder="Ask about the breakdown…" ${chat.busy ? 'disabled' : ''}></textarea>
+      <div class="chat-actions">
+        <button class="btn primary" data-act="chat-send" ${chat.busy ? 'disabled' : ''}>Send</button>
+        <button class="btn" data-act="chat-decisions" ${chat.busy ? 'disabled' : ''}>→ Decision set</button>
+      </div>
+    </div>
+    <div class="chat-hint">Read-only consult — nothing files until you review and commit a decision set. Close returns to your draft.</div>`;
+
+  panel.querySelector('.chat-close').onclick = closeConsultChat;
+  panel.querySelector('[data-act="chat-send"]')?.addEventListener('click', () => {
+    const ta = panel.querySelector('#chat-input');
+    const text = (ta?.value || '').trim();
+    if (text) sendConsultTurn(text);
+  });
+  panel.querySelector('#chat-input')?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      const text = ev.target.value.trim();
+      if (text && !chat.busy) sendConsultTurn(text);
+    }
+  });
+  panel.querySelector('[data-act="chat-decisions"]')?.addEventListener('click', requestDecisionSet);
+  panel.querySelector('[data-act="chat-cancel"]')?.addEventListener('click', () => {
+    chat?.abort?.abort();
+  });
+  const list = panel.querySelector('#chat-msgs');
+  if (list) list.scrollTop = list.scrollHeight;
+}
+
+async function sendConsultTurn(content) {
+  if (!chat || chat.busy) return;
+  chat.messages.push({ role: 'user', content });
+  chat.busy = true;
+  chat.elapsed = 0;
+  chat.abort = new AbortController();
+  // gpt-5.4 is SLOW (T12: gpt-mini alone took ~90 s on an 8 KB dump) — show
+  // a live elapsed counter + Cancel instead of a frozen overlay.
+  chat.timer = setInterval(() => {
+    if (!chat) return;
+    chat.elapsed++;
+    const el = document.getElementById('chat-elapsed');
+    if (el) el.textContent = chat.elapsed;
+  }, 1000);
+  renderConsultChat();
+
+  const awaiting = chat.awaitingDecisionSet;
+  try {
+    const r = await fetch('/api/consult', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        bundle: chat.bundle,
+        // Stateless provider: the whole history travels every round.
+        messages: chat.messages.filter(m => m.role !== 'error'),
+      }),
+      signal: chat.abort.signal,
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!chat) return; // closed mid-flight
+    if (!r.ok) throw new Error(data.error || `consult ${r.status}`);
+    chat.llm = data.llm || chat.llm;
+    finishConsultTurn();
+    chat.messages.push({ role: 'assistant', content: data.reply });
+    // Only the reply to the "→ Decision set" turn is parsed as one — a normal
+    // prose reply containing {…} must not false-positive into the gate.
+    if (awaiting) routeDecisionSetReply(data.reply);
+    else renderConsultChat();
+  } catch (err) {
+    if (!chat) return; // closed mid-flight
+    finishConsultTurn();
+    chat.awaitingDecisionSet = false;
+    // Visible failure, intact transcript — no silent fallback (the whole
+    // point of the native engine after Copilot's opaque refusal).
+    chat.messages.push({
+      role: 'error',
+      content: err.name === 'AbortError'
+        ? 'Cancelled. The turn was not completed — send again to retry.'
+        : `Consult failed: ${err.message}`,
+    });
+    renderConsultChat();
+  }
+}
+
+function finishConsultTurn() {
+  if (chat.timer) clearInterval(chat.timer);
+  chat.timer = null;
+  chat.busy = false;
+  chat.abort = null;
+}
+
+function requestDecisionSet() {
+  if (!chat || chat.busy) return;
+  chat.awaitingDecisionSet = true;
+  sendConsultTurn(DECISION_PROMPT(getUserName()));
+}
+
+function routeDecisionSetReply(reply) {
+  chat.awaitingDecisionSet = false;
+  const obj = parseDecisionSet(reply);
+  if (obj && isDecisionSet(obj)) {
+    const stash = { bundle: chat.bundle, entryId: chat.entryId, newContainerIds: chat.newContainerIds };
+    const engine = chat.llm || 'Native consult';
+    closeConsultChat();
+    openDecisionsReview(stash, obj, { engine });
+    return;
+  }
+  chat.messages.push({
+    role: 'error',
+    content: 'That reply didn\'t parse as a decision set — ask the model to re-emit the complete raw JSON, or click "→ Decision set" again.',
+  });
+  renderConsultChat();
 }
 
 // ---------- Paste from Copilot (Copilot-assisted ingestion · v2) -----
@@ -4073,7 +4257,7 @@ function handleCopilotIntake(text, modal) {
 // a decisions-mode triage. NOTHING mutates atom/container state here (the
 // stale-entry fallback may add one entry to hold raw_dump); all real writes
 // happen in commitTriage when the user commits.
-function openDecisionsReview(stash, decisions) {
+function openDecisionsReview(stash, decisions, { engine = null } = {}) {
   const { bundle, entryId, newContainerIds = [] } = stash;
   const plan = resolveDecisions(bundle, decisions, {
     state,
@@ -4129,6 +4313,7 @@ function openDecisionsReview(stash, decisions) {
     entryId: entry.id,
     source: 'decisions',
     llm: null,
+    engine, // who produced the decision set (null → 'Copilot', the paste path)
     mode: 'decisions',
     clusters,
     expanded: {},
