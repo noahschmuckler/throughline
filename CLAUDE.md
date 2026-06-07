@@ -18,19 +18,53 @@ back-to-program, engine-name header, T20 diagnostics) were merged **without
 an orange retest** — verify them on the next orange run. Tests: 79/79
 (`node --test test/`).
 
-**CURRENT SPRINT (processed 2026-06-07) — SPRINT 1: "industrial ingestion".**
-The processing session ran; results live in `TICKETS.md` "Triaged / planned"
-(full priorities + approaches there). Sprint 1 contents: **T16** server-side
-async ingestion + results inbox queue (core, design-first), **T26**
-chat↔review flexing (consult session survives the decision-set→review
-transition), **T20 steps 3–4** (retry on empty reply + a config flag to skip
-the heuristic fallback on big dumps — A/B the 5.4 "fix this mess" hypothesis
-during real orange work), **T22** next-action queue, plus riders **T18**
-(program_id on decision-set creates), **T10** (kanban states edit UI),
-**T1+T2** (state-write hardening). **Sprint 2 = the E3 design conversation**
-(VISION.md first: T11 keystone, T9/T19 inside, T17 after T26). T27 stage 1
-floats; T3/T5-rest/T6/T7 parked (T7 pending the T20 experiment). **Sprint 1
-work goes on a NEW branch off `main`** (e.g. `industrial-ingestion`).
+**SPRINT 1 "industrial ingestion" — BUILT (2026-06-07, branch
+`industrial-ingestion`, 102/102 tests, NOT merged — needs Noah's review +
+orange live test).** What shipped (commit per ticket, headless-verified):
+- **T16 — async ingestion.** `lib/jobs.js`: machine-local `{jobs, sessions}`
+  store at `THROUGHLINE_JOBS` (default `./data/jobs.json` — deliberately NOT
+  beside the OneDrive-synced state.json; one operator's work artifacts must
+  not sync to the other box). Atomic writes under a promise-chain mutex;
+  injected runners; FIFO with slot-reserved cap
+  (`THROUGHLINE_JOB_CONCURRENCY`, default 3); `sweepOnBoot` (running→error,
+  queued→re-run). `/api/jobs*` + `/api/sessions*` in server.js; **Worker
+  501s and the front-end probes at boot** (`JOBS_ENABLED`; 501 ⇒ the
+  original synchronous paths — the fallback contract). Atomize submits a
+  job, polls 2 s, "⏏ Run in background" detaches; `buildTriageFromResult`
+  is the single funnel (sync/async/Results-reopen render identically).
+  **Results strip** on the dashboard (atomize jobs + consult sessions;
+  re-entrant Open, soft Dismiss; 5 s poll via a central registry cleared on
+  route change).
+- **T26 — chat↔review flexing.** The chat is a thin view over a server
+  session (transcript persisted; reload/navigation-safe; reopen from
+  Results re-attaches to an in-flight turn). Busy Cancel became
+  "⏏ Background" = detach. "↩ Back to chat" in a session-backed decisions
+  review folds the user's manual re-filings into ONE visible "[from review]
+  …treat these as fixed decisions" turn (`reviewCorrectionsNote` in
+  ingest.js, pure + tested) and reopens the chat; the next "→ Decision set"
+  re-enters review revised. Sessions: active→reviewing→committed
+  (commitTriage PATCHes; committed/abandoned leave Results).
+- **T20 — pipeline reliability.** cdsapi retries once on an empty-bodied
+  success (the live failure mode); env knobs **ATOMIZE_TIER**
+  (reason|escalate — draft straight on gpt-5.4) and **ATOMIZE_ON_FAIL**
+  (heuristic|escalate|error). The orange A/B (does a 5.4 draft beat
+  mini+heuristic?) is Noah's to run with real dumps.
+- **T22 — next-action queue.** `atom.queued` flag; ☆ toggles on drawer
+  action rows / kanban cards / rail items; "▶ Next actions" section on the
+  dashboard (program-aware chips, unqueue, click-through); "N queued" in
+  the summary bar. Per-user scoping deferred to M3.
+- **Riders.** T18 (decision-set creates carry a validated `program_id`
+  through prompt→gate→commit; review label shows the program), T10 (kanban
+  columns editable in the Edit modal, ids position-matched so renames keep
+  cards), T1 (boot guardrail: THROUGHLINE_DB-is-a-folder auto-appends
+  state.json loudly; save toast shows the server's real error), T2
+  (writeState rename-retry on OneDrive lock codes + logged direct-write
+  fallback).
+**NEXT:** Noah reviews + orange live test (branch-run flow — server.js,
+lib/*, shared/* all changed) → merge → sprint retro → **sprint 2 = the E3
+design conversation** (VISION.md first: T11 keystone, T9/T19 inside, T17
+after T26 proves out). T27 stage 1 floats; T3/T5-rest/T6/T7 parked (T7
+pending the T20 experiment).
 
 Post-T13 quick wins shipped 2026-06-07 (same branch): **chat markdown
 rendering** (T14 — escape-first `mdToHtml`, assistant bubbles only);
