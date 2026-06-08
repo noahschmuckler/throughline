@@ -3974,6 +3974,11 @@ function closeTriage() {
 function renderTriage() {
   if (!triage) return;
   const panel = document.getElementById('triage');
+  // T33: each re-render (e.g. expanding a cluster, changing a target) rebuilds
+  // panel.innerHTML and so replaces .t-clusters — the scroll container. Capture
+  // its scroll now and restore it after, so the review doesn't jump to the top
+  // every time you open another proposed item.
+  const prevClustersScroll = panel.querySelector('.t-clusters')?.scrollTop || 0;
   const entry = state.entries.find(e => e.id === triage.entryId);
   if (!entry) { closeTriage(); return; }
   const { total, assigned } = triageTotals();
@@ -4136,6 +4141,8 @@ function renderTriage() {
       </div>
     </div>`;
 
+  const clustersEl = panel.querySelector('.t-clusters');
+  if (clustersEl) clustersEl.scrollTop = prevClustersScroll; // T33: restore scroll
   wireTriage();
 }
 
