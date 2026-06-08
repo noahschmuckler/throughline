@@ -1117,6 +1117,23 @@ label.field > .label {
 .vtbtn.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
 
 /* Project tile grid */
+/* T34: dashboard shelves (named views) + Organize mode */
+.shelf-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 18px 0 2px; }
+.shelf-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.shelf-tab { font-size: 0.78rem; font-family: var(--sans); font-weight: 600; color: var(--mute); background: transparent; border: 1px solid var(--card-edge); padding: 4px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.shelf-tab:hover { background: var(--thread-faint); border-color: var(--thread-soft); color: var(--thread); }
+.shelf-tab.active { background: var(--thread, #2b6a6a); border-color: var(--thread, #2b6a6a); color: #fff; }
+.shelf-tab.tab-drop { background: var(--thread-faint); border-color: var(--thread); border-style: dashed; color: var(--thread); }
+.shelf-count { font-size: 0.66rem; font-weight: 700; opacity: 0.75; margin-left: 2px; }
+.shelf-organize { white-space: nowrap; }
+.shelf-organize.on { color: var(--thread, #2b6a6a); border-color: var(--thread, #2b6a6a); font-weight: 600; }
+.shelf-org-controls { flex-basis: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 2px 2px; }
+.shelf-org-hint { font-size: 0.7rem; color: var(--mute); margin-left: 4px; }
+.tile.organizing { cursor: grab; outline: 1px dashed var(--card-edge); outline-offset: 2px; }
+.tile.organizing:hover { transform: none; }
+.tile.dragging { opacity: 0.45; }
+.tile.tile-dropbefore { box-shadow: -4px 0 0 0 var(--thread, #2b6a6a), 0 2px 8px rgba(0,0,0,0.10); }
+
 .tile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 16px 0 8px; }
 .tile-empty { grid-column: 1 / -1; }
 @media (max-width: 900px) { .tile-grid { grid-template-columns: repeat(2, 1fr); } }

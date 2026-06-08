@@ -21,7 +21,7 @@ let currentDrawerEntryId = null;
 const homeFilters = { search: '', activeTags: new Set(), actionFilters: { overdue: false, dueSoon: false, unqueued: false } };
 
 // Dashboard view state (home toggle + per-person/per-project tab selections).
-const ui = { homeView: 'projects', personId: null, personTab: 'actions', projectTab: 'overview' };
+const ui = { homeView: 'projects', personId: null, personTab: 'actions', projectTab: 'overview', shelf: null, organize: false };
 
 // ---------- State + persistence ------------------------------------
 
@@ -714,6 +714,7 @@ function renderHomeProjects(body) {
   renderHomeTagChips();
   renderActionResults();
   renderNextActions();
+  renderShelfBar();
   renderProjectGrid();
   renderHomeBody();
   renderRecent();
@@ -918,24 +919,198 @@ function renderActionResults() {
   });
 }
 
+// ============ T34: dashboard shelves (named views) ====================
+// Per-user, LOCAL organization of the top-level tiles (programs + standalone
+// projects). Organizing is personal — your "Back burner" must not reshape the
+// other operator's board — so this lives in localStorage, like the profile
+// name, NOT in the shared state.json. One shelf per tile (default "Main");
+// "All" is a pseudo-shelf that always shows everything. The next-actions queue
+// and action search stay GLOBAL (shelves only group the project tiles).
+const SHELVES_KEY = 'throughline:shelves';
+const ALL_SHELF = '__all__';
+let dragCid = null; // the tile being dragged in Organize mode
+
+function defaultShelves() { return { shelves: [{ id: 'main', name: 'Main' }], assign: {}, order: {}, landing: 'main' }; }
+function loadShelves() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SHELVES_KEY) || 'null'); } catch { s = null; }
+  if (!s || !Array.isArray(s.shelves) || !s.shelves.length) s = defaultShelves();
+  if (!s.shelves.some(x => x.id === 'main')) s.shelves.unshift({ id: 'main', name: 'Main' });
+  s.assign = (s.assign && typeof s.assign === 'object') ? s.assign : {};
+  s.order = (s.order && typeof s.order === 'object') ? s.order : {};
+  if (!s.shelves.some(x => x.id === s.landing)) s.landing = 'main';
+  return s;
+}
+let shelves = loadShelves();
+function saveShelves() { try { localStorage.setItem(SHELVES_KEY, JSON.stringify(shelves)); } catch { /* private mode — in-memory only */ } }
+
+function shelfIdOf(cid) {
+  const sid = shelves.assign[cid];
+  return (sid && shelves.shelves.some(x => x.id === sid)) ? sid : 'main';
+}
+function currentShelf() {
+  if (!ui.shelf) ui.shelf = shelves.landing;
+  if (ui.shelf !== ALL_SHELF && !shelves.shelves.some(x => x.id === ui.shelf)) ui.shelf = 'main';
+  return ui.shelf;
+}
+function topLevelTiles() {
+  return state.containers.filter(c => c.status !== 'archived'
+    && (c.type === 'program' || (c.type === 'project' && !c.program_id)));
+}
+function shelfCount(shelfId) {
+  const items = topLevelTiles();
+  return shelfId === ALL_SHELF ? items.length : items.filter(c => shelfIdOf(c.id) === shelfId).length;
+}
+function assignToShelf(cid, shelfId) {
+  if (shelfId === ALL_SHELF) return;            // "All" isn't a real bucket
+  if (shelfId === 'main') delete shelves.assign[cid]; else shelves.assign[cid] = shelfId;
+  // it re-lands at the end of its new shelf — drop any stale ordering
+  for (const k of Object.keys(shelves.order)) shelves.order[k] = (shelves.order[k] || []).filter(id => id !== cid);
+  saveShelves();
+}
+function deleteShelf(id) {
+  if (id === 'main') return;
+  shelves.shelves = shelves.shelves.filter(s => s.id !== id);
+  for (const cid of Object.keys(shelves.assign)) if (shelves.assign[cid] === id) delete shelves.assign[cid];
+  delete shelves.order[id];
+  if (shelves.landing === id) shelves.landing = 'main';
+  if (ui.shelf === id) ui.shelf = 'main';
+  saveShelves();
+}
+
+// Top-level tiles for a shelf, in the user's saved order (unordered → recency).
+// `withSearch` applies the dashboard search/tag filter (off for the tab counts).
+function tilesForShelf(shelfId, withSearch = true) {
+  const all = withSearch
+    ? [...filterContainers('program'), ...filterContainers('project').filter(c => !c.program_id)]
+    : topLevelTiles();
+  const inShelf = shelfId === ALL_SHELF ? all : all.filter(c => shelfIdOf(c.id) === shelfId);
+  const ord = shelves.order[shelfId] || [];
+  const pos = new Map(ord.map((id, i) => [id, i]));
+  return inShelf.sort((a, b) => {
+    const pa = pos.has(a.id) ? pos.get(a.id) : Infinity;
+    const pb = pos.has(b.id) ? pos.get(b.id) : Infinity;
+    if (pa !== pb) return pa - pb;
+    const ta = lastTouchedOf(a.id) || a.created_at || '';
+    const tb = lastTouchedOf(b.id) || b.created_at || '';
+    return tb.localeCompare(ta);
+  });
+}
+function reorderBefore(cid, targetCid) {
+  const shelf = currentShelf();
+  const ids = tilesForShelf(shelf).map(c => c.id).filter(id => id !== cid);
+  const idx = ids.indexOf(targetCid);
+  if (idx < 0) return;
+  ids.splice(idx, 0, cid);
+  shelves.order[shelf] = ids;
+  saveShelves();
+  renderProjectGrid();
+}
+
+function renderShelfBar() {
+  const bar = document.getElementById('shelf-bar');
+  if (!bar) return;
+  // A single Main shelf + no Organize touch yet = nothing to show; keep the
+  // default dashboard clean until the user starts organizing.
+  const hasViews = shelves.shelves.length > 1;
+  if (!hasViews && !ui.organize) {
+    bar.innerHTML = `<div class="shelf-tabs"></div><button class="btn tiny shelf-organize" data-shelf-organize>⚙ Organize</button>`;
+    bar.querySelector('[data-shelf-organize]').onclick = () => { ui.organize = true; renderShelfBar(); renderProjectGrid(); };
+    return;
+  }
+  const cur = currentShelf();
+  const tabs = [...shelves.shelves, { id: ALL_SHELF, name: 'All' }];
+  bar.innerHTML = `
+    <div class="shelf-tabs">
+      ${tabs.map(s => {
+        const star = (s.id === shelves.landing && s.id !== ALL_SHELF) ? '★ ' : '';
+        return `<button class="shelf-tab${s.id === cur ? ' active' : ''}" data-shelf="${escHtml(s.id)}">${star}${escHtml(s.name)} <span class="shelf-count">${shelfCount(s.id)}</span></button>`;
+      }).join('')}
+    </div>
+    <button class="btn tiny shelf-organize${ui.organize ? ' on' : ''}" data-shelf-organize>${ui.organize ? '✓ Done' : '⚙ Organize'}</button>
+    ${ui.organize ? `<div class="shelf-org-controls">
+      <button class="btn tiny" data-shelf-add>+ New view</button>
+      ${cur !== ALL_SHELF && cur !== shelves.landing ? `<button class="btn tiny" data-shelf-landing>★ Land here</button>` : ''}
+      ${cur !== ALL_SHELF && cur !== 'main' ? `<button class="btn tiny" data-shelf-rename>✎ Rename</button> <button class="btn tiny danger" data-shelf-delete>✕ Delete view</button>` : ''}
+      <span class="shelf-org-hint">Drag a tile onto a view tab to file it there; drag tiles to reorder.</span>
+    </div>` : ''}`;
+
+  bar.querySelectorAll('[data-shelf]').forEach(btn => {
+    const id = btn.dataset.shelf;
+    btn.onclick = () => { ui.shelf = id; renderShelfBar(); renderProjectGrid(); };
+    if (ui.organize) {                         // tabs are drop targets while organizing
+      btn.addEventListener('dragover', (e) => { if (dragCid && id !== ALL_SHELF) { e.preventDefault(); btn.classList.add('tab-drop'); } });
+      btn.addEventListener('dragleave', () => btn.classList.remove('tab-drop'));
+      btn.addEventListener('drop', (e) => {
+        e.preventDefault(); btn.classList.remove('tab-drop');
+        if (dragCid && id !== ALL_SHELF) { assignToShelf(dragCid, id); ui.shelf = id; renderShelfBar(); renderProjectGrid(); }
+      });
+    }
+  });
+  bar.querySelector('[data-shelf-organize]').onclick = () => { ui.organize = !ui.organize; renderShelfBar(); renderProjectGrid(); };
+  bar.querySelector('[data-shelf-add]')?.addEventListener('click', () => {
+    const name = (prompt('Name this view (e.g. "Back burner", "This week"):') || '').trim();
+    if (!name) return;
+    const id = uid();
+    shelves.shelves.push({ id, name });
+    saveShelves();
+    ui.shelf = id; renderShelfBar(); renderProjectGrid();
+  });
+  bar.querySelector('[data-shelf-landing]')?.addEventListener('click', () => { shelves.landing = cur; saveShelves(); renderShelfBar(); });
+  bar.querySelector('[data-shelf-rename]')?.addEventListener('click', () => {
+    const s = shelves.shelves.find(x => x.id === cur); if (!s) return;
+    const name = (prompt('Rename view:', s.name) || '').trim();
+    if (name) { s.name = name; saveShelves(); renderShelfBar(); }
+  });
+  bar.querySelector('[data-shelf-delete]')?.addEventListener('click', () => {
+    const s = shelves.shelves.find(x => x.id === cur); if (!s) return;
+    if (!confirm(`Delete the "${s.name}" view? Its ${shelfCount(cur)} project(s) move back to Main — nothing is deleted.`)) return;
+    deleteShelf(cur); renderShelfBar(); renderProjectGrid();
+  });
+}
+
+// Make a tile draggable + a reorder drop target while in Organize mode.
+function decorateOrganizeTile(tile, c) {
+  tile.classList.add('organizing');
+  tile.draggable = true;
+  tile.onclick = null;                          // no navigation while organizing
+  tile.addEventListener('dragstart', (e) => { dragCid = c.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.id); tile.classList.add('dragging'); });
+  tile.addEventListener('dragend', () => { dragCid = null; tile.classList.remove('dragging'); document.querySelectorAll('.tile-dropbefore').forEach(t => t.classList.remove('tile-dropbefore')); });
+  tile.addEventListener('dragover', (e) => { if (dragCid && dragCid !== c.id) { e.preventDefault(); tile.classList.add('tile-dropbefore'); } });
+  tile.addEventListener('dragleave', () => tile.classList.remove('tile-dropbefore'));
+  tile.addEventListener('drop', (e) => {
+    e.preventDefault(); tile.classList.remove('tile-dropbefore');
+    if (dragCid && dragCid !== c.id) reorderBefore(dragCid, c.id);
+  });
+}
+
 function renderProjectGrid() {
   const grid = document.getElementById('project-grid');
   if (!grid) return;
   grid.innerHTML = '';
-  const byRecent = (a, b) => {
-    const ta = lastTouchedOf(a.id) || a.created_at || '';
-    const tb = lastTouchedOf(b.id) || b.created_at || '';
-    return tb.localeCompare(ta);
-  };
-  const progs = filterContainers('program').sort(byRecent);
-  // Projects inside a program live under it — only standalone projects here.
-  const projects = filterContainers('project').filter(c => !c.program_id).sort(byRecent);
-  if (!progs.length && !projects.length) {
-    grid.innerHTML = `<div class="empty muted tile-empty">No projects yet. Click <strong>✦ New project</strong> to start one.</div>`;
+  // Search transcends shelves so a back-burnered project stays findable; without
+  // a query, the grid is the current shelf only.
+  const searching = !!homeFilters.search || homeFilters.activeTags.size > 0;
+  let items;
+  if (searching) {
+    const byRecent = (a, b) => (lastTouchedOf(b.id) || b.created_at || '').localeCompare(lastTouchedOf(a.id) || a.created_at || '');
+    items = [...filterContainers('program').sort(byRecent), ...filterContainers('project').filter(c => !c.program_id).sort(byRecent)];
+  } else {
+    items = tilesForShelf(currentShelf());
+  }
+  if (!items.length) {
+    grid.innerHTML = searching
+      ? `<div class="empty muted tile-empty">No projects match.</div>`
+      : (topLevelTiles().length
+        ? `<div class="empty muted tile-empty">No projects on this view. Switch to <strong>All</strong>, or drag tiles here in <strong>⚙ Organize</strong>.</div>`
+        : `<div class="empty muted tile-empty">No projects yet. Click <strong>✦ New project</strong> to start one.</div>`);
     return;
   }
-  for (const p of progs) grid.appendChild(renderProgramTile(p));
-  for (const c of projects) grid.appendChild(renderProjectTile(c));
+  for (const c of items) {
+    const tile = c.type === 'program' ? renderProgramTile(c) : renderProjectTile(c);
+    if (ui.organize && !searching) decorateOrganizeTile(tile, c);
+    grid.appendChild(tile);
+  }
 }
 
 // A program shows as a distinct top-level tile (navy, "PROGRAM" badge, objective,
