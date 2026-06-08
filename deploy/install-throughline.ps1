@@ -173,14 +173,24 @@ Remove-Tmp  # the bundle now lives in $Root; the download temp is no longer need
 # --- 5. .env handling (the setup wizard fills in ONEDRIVE_ROOT/THROUGHLINE_DB) ---
 $envExamplePath = Join-Path $Root '.env.example'
 if ($envBackup) {
-  Set-Content -LiteralPath $envPath -Value $envBackup -NoNewline
+  # Migrate the old shipping default (LLM_PROVIDER=heuristic - no real model) to
+  # cdsapi, the on-network provider. A non-technical user who installed before
+  # the default flip would otherwise stay stuck on the keyword-match heuristic
+  # with no way to fix it but editing .env. Anchored to the active line, so a
+  # commented "# LLM_PROVIDER=heuristic" or an explicit anthropic/cdsapi/custom
+  # choice is left untouched.
+  $migrated = $envBackup -replace '(?m)^LLM_PROVIDER=heuristic', 'LLM_PROVIDER=cdsapi'
+  if ($migrated -ne $envBackup) {
+    Write-Host "  upgraded LLM_PROVIDER: heuristic -> cdsapi in your .env" -ForegroundColor Cyan
+  }
+  Set-Content -LiteralPath $envPath -Value $migrated -NoNewline
   Write-Host "  restored your prior .env"
 } elseif (Test-Path -LiteralPath $envExamplePath) {
   Copy-Item -LiteralPath $envExamplePath -Destination $envPath
   Write-Host "  created $envPath from .env.example (the setup screen finishes config)"
 } else {
   Write-Host "  WARNING: no .env.example shipped; creating a minimal .env" -ForegroundColor Red
-  Set-Content -LiteralPath $envPath -Value "THROUGHLINE_DB=./data/state.json`nPORT=$Port`nHOST=127.0.0.1`nLLM_PROVIDER=heuristic`n"
+  Set-Content -LiteralPath $envPath -Value "THROUGHLINE_DB=./data/state.json`nPORT=$Port`nHOST=127.0.0.1`nLLM_PROVIDER=cdsapi`n"
 }
 
 # --- 6. Verify Node is available ---
