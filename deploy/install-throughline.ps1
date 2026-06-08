@@ -137,20 +137,37 @@ try {
   Write-Host "  (no port owner found, or Get-NetTCPConnection unavailable)" -ForegroundColor DarkGray
 }
 
-# --- 4. Copy bundle into install location (preserve .env + any local data) ---
+# --- 4. Copy bundle into install location (preserve .env + the data\ dir) ---
 $envBackup = $null
 $envPath   = Join-Path $Root '.env'
 if (Test-Path -LiteralPath $envPath) {
   $envBackup = Get-Content -LiteralPath $envPath -Raw
   Write-Host "Preserving existing .env" -ForegroundColor DarkGray
 }
+# T28: the machine-local data\ dir holds jobs.json (in-flight jobs + consult
+# sessions, T16) and, on a pre-setup install, state.json. The wipe below would
+# destroy it, so move it to a sibling backup and restore it after the copy.
+$dataDir    = Join-Path $Root 'data'
+$dataBackup = "$Root.data.bak"
+$dataSaved  = $false
+if (Test-Path -LiteralPath $dataBackup) { Remove-Item -LiteralPath $dataBackup -Recurse -Force }
+if (Test-Path -LiteralPath $dataDir) {
+  Move-Item -LiteralPath $dataDir -Destination $dataBackup -Force
+  $dataSaved = $true
+  Write-Host "Preserving existing data\ (jobs + consult sessions)" -ForegroundColor DarkGray
+}
 if (Test-Path -LiteralPath $Root) {
-  Write-Host "Removing prior install at $Root (keeping a .env copy)..." -ForegroundColor Yellow
+  Write-Host "Removing prior install at $Root (keeping .env + data\ copies)..." -ForegroundColor Yellow
   Remove-Item -LiteralPath $Root -Recurse -Force
 }
 Write-Host "Copying bundle to $Root..."
 New-Item -Force -ItemType Directory -Path $Root | Out-Null
 Copy-Item -Path (Join-Path $Source '*') -Destination $Root -Recurse -Force
+if ($dataSaved) {
+  if (Test-Path -LiteralPath $dataDir) { Remove-Item -LiteralPath $dataDir -Recurse -Force }
+  Move-Item -LiteralPath $dataBackup -Destination $dataDir -Force
+  Write-Host "  restored your data\ (jobs + consult sessions)"
+}
 Remove-Tmp  # the bundle now lives in $Root; the download temp is no longer needed
 
 # --- 5. .env handling (the setup wizard fills in ONEDRIVE_ROOT/THROUGHLINE_DB) ---

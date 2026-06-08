@@ -94,9 +94,10 @@ test('describeLLM: provider/tier → descriptor; heuristic-shaped configs → nu
 // ---- T20 steps 3-4: tier + onFail experiment knobs --------------------
 
 test('atomizeOpts: env validation with safe defaults', () => {
-  assert.deepEqual(atomizeOpts({}), { tier: 'reason', onFail: 'heuristic' });
-  assert.deepEqual(atomizeOpts({ ATOMIZE_TIER: 'escalate', ATOMIZE_ON_FAIL: 'error' }), { tier: 'escalate', onFail: 'error' });
-  assert.deepEqual(atomizeOpts({ ATOMIZE_TIER: 'bogus', ATOMIZE_ON_FAIL: 'bogus' }), { tier: 'reason', onFail: 'heuristic' });
+  // T30 (2026-06-08): default tier flipped reason→escalate (gpt-mini retired).
+  assert.deepEqual(atomizeOpts({}), { tier: 'escalate', onFail: 'heuristic' });
+  assert.deepEqual(atomizeOpts({ ATOMIZE_TIER: 'reason', ATOMIZE_ON_FAIL: 'error' }), { tier: 'reason', onFail: 'error' });
+  assert.deepEqual(atomizeOpts({ ATOMIZE_TIER: 'bogus', ATOMIZE_ON_FAIL: 'bogus' }), { tier: 'escalate', onFail: 'heuristic' });
 });
 
 test('atomizeEntry: tier passes through to llmCall; result records it', async () => {
@@ -111,7 +112,9 @@ test('atomizeEntry: tier passes through to llmCall; result records it', async ()
 test('atomizeEntry: onFail=escalate retries at escalate tier, then heuristic with both fails', async () => {
   const tiers = [];
   const llmCall = async ({ tier }) => { tiers.push(tier); throw new Error(`${tier} down`); };
-  const r = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall, onFail: 'escalate' });
+  // explicit tier:'reason' — the default is now 'escalate' (T30), so to exercise
+  // the lower-tier→escalate retry path we start from reason on purpose.
+  const r = await atomizeEntry(ENTRY, { projects: PROJECTS, llmCall, tier: 'reason', onFail: 'escalate' });
   assert.deepEqual(tiers, ['reason', 'escalate']);
   assert.equal(r.source, 'heuristic');
   assert.match(r.fail, /reason: reason down/);

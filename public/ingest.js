@@ -26,7 +26,10 @@ export const BUNDLE_INSTRUCTIONS =
   'user\'s real workspace containers (program_id links a project to its parent program). ' +
   'Do NOT review the JSON formatting; it is machine-generated. Instead, help the user ' +
   'process the dump: (1) critique the breakdown — is each atom correctly typed and filed ' +
-  'against the best container, and should any be split or merged? (2) say what in raw_dump ' +
+  'against the best container, and should any be split or merged? (kinds: observation = a ' +
+  'reported fact, not a want/"should"; decision = a settled choice or requirement, incl. ' +
+  '"X should do Y"; action = a thing still to do, incl. deciding something not yet decided; ' +
+  'outcome = a result that closes one) (2) say what in raw_dump ' +
   'the draft missed or mis-grouped; (3) help answer the needs_clarification[] questions; ' +
   '(4) prefer filing into existing state_summary containers — propose a new container only ' +
   'when nothing fits. Reply in plain prose for a human reader.';
@@ -59,7 +62,11 @@ export function DECISION_PROMPT(userName) {
     '"target" (a real container id from state_summary, ' +
     'one of my p…/n… ids, or "inbox"; for merge_into, the surviving atom id), "framework" (projects ' +
     'only), "assigned_to", "due_date" (YYYY-MM-DD), "source_ref" (quote the raw_dump line that grounds ' +
-    'it), "note" (one line of reasoning), "confidence" (0.0–1.0). RULES: programs cannot hold atoms — ' +
+    'it), "note" (one line of reasoning), "confidence" (0.0–1.0). KIND RULES: observation = a ' +
+    'reported fact or state (NOT a want or a "should"); decision = a SETTLED choice or requirement, ' +
+    'including "the X should do Y" or "we will use Z"; action = a thing still to be done, INCLUDING ' +
+    'deciding something not yet decided ("decide whether…"); outcome = a result that closes an action ' +
+    'or decision. RULES: programs cannot hold atoms — ' +
     'never set target to a type:"program" container; file into a project or reference file within ' +
     'that program, creating one if needed. Never emit the same atom twice — one verdict per distinct ' +
     'fact/decision/action; before filing into an existing project, check its program_id in ' +

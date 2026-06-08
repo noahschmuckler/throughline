@@ -4510,6 +4510,12 @@ async function openConsultSession(sessionId) {
     messages: (session.messages || []).map(m => ({ role: m.role, content: m.content })),
     busy: false, llm: null, elapsed: 0, timer: null, abort: null, awaitingDecisionSet: false,
   };
+  // T31: a session may be mid-review — a decision set was produced but never
+  // routed (the "→ Decision set" turn completed while detached, so it landed
+  // in the transcript as raw JSON), or routed-then-closed. Resume the review
+  // directly instead of dropping the user into the chat staring at the JSON.
+  if (await resumeReviewIfPending(session)) return;
+
   document.getElementById('chat-shroud').hidden = false;
   renderConsultChat();
   chatProbeEngine();
@@ -4529,6 +4535,53 @@ async function openConsultSession(sessionId) {
       }
     }
   } catch { /* idle view is fine */ }
+}
+
+// T31: decide whether reopening this session should jump straight into the
+// decisions review rather than the chat. Returns true if it handled the open
+// (and the chat should NOT be shown). `chat` is already built for this session.
+async function resumeReviewIfPending(session) {
+  if (!chat || chat.sessionId !== session.id) return false;
+  // (a) Already routed once (foreground path PATCHed it, or a prior reopen
+  //     did) and the review was closed without committing — resume it.
+  if (session.status === 'reviewing' && session.last_decision_set && isDecisionSet(session.last_decision_set)) {
+    return openReviewForSession(session.last_decision_set);
+  }
+  // (b) The decision-set turn completed while the chat was backgrounded, so it
+  //     was never routed: status is still 'active' and the last transcript
+  //     turn is the assistant's decision-set JSON. ("↩ back to chat" instead
+  //     leaves a user [from review] note last, so role !== 'assistant' guards
+  //     that case; the job's awaiting flag guards a normal prose reply that
+  //     merely contains JSON.)
+  if (session.status !== 'active') return false;
+  const msgs = session.messages || [];
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== 'assistant') return false;
+  let job = null;
+  try {
+    const r = await fetch('/api/jobs?kind=consult_turn');
+    if (r.ok) job = ((await r.json()).jobs || []).find(j => j.input?.session_id === session.id && j.status === 'done');
+  } catch { return false; }
+  if (!job || job.input?.awaiting_decision_set !== true) return false;
+  const obj = parseDecisionSet(last.content);
+  if (!obj || !isDecisionSet(obj)) return false; // unparseable → fall through to chat
+  // Mark the move to review so a later reopen takes path (a).
+  fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status: 'reviewing', last_decision_set: obj }),
+  }).catch(() => {});
+  return openReviewForSession(obj);
+}
+
+// Close the (not-yet-shown) chat and open the decisions review from a parsed
+// decision set — the shared tail of routeDecisionSetReply, reused on reopen.
+function openReviewForSession(obj) {
+  const stash = { bundle: chat.bundle, entryId: chat.entryId, newContainerIds: chat.newContainerIds };
+  const engine = chat.llm || 'Native consult';
+  const serverSessionId = chat.sessionId || null;
+  closeConsultChat();
+  openDecisionsReview(stash, obj, { engine, serverSessionId });
+  return true;
 }
 
 function closeConsultChat() {

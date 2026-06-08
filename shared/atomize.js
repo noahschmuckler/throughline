@@ -32,9 +32,9 @@ export function buildAtomizePrompt(entry, { projects = [] } = {}) {
   return [
     'You are the ingestion layer of Throughline, a project-tracking tool.',
     'Read the raw entry below and extract discrete "atoms". Each atom is exactly one of:',
-    '  - observation: a fact or state of the world that was reported',
-    '  - decision: a choice that was made',
-    '  - action: a commitment to do something (capture owner + due date if stated)',
+    '  - observation: a fact or state of the world that was REPORTED (true now, or that happened). NOT a want, plan, or "should" statement — those are decisions or actions.',
+    '  - decision: a choice that has been SETTLED — including a settled requirement or direction, e.g. "the dashboard should show X" or "we will use Y". A choice still to be made is an action, not a decision.',
+    '  - action: a thing still to be DONE (capture owner + due date if stated). This INCLUDES deciding something not yet decided, e.g. "decide whether to do X or Y" — the deciding is the work.',
     '',
     'Group the atoms into clusters by topic. For each cluster, suggest which',
     'existing project it belongs to (by id) or null if none fits.',
@@ -64,20 +64,22 @@ export function buildAtomizePrompt(entry, { projects = [] } = {}) {
 // Read the T20 experiment knobs from env (Worker binding or process.env) —
 // shared by both backends so the contract can't drift.
 export function atomizeOpts(env = {}) {
-  const tier = ['classify', 'reason', 'escalate'].includes(env.ATOMIZE_TIER) ? env.ATOMIZE_TIER : 'reason';
+  const tier = ['classify', 'reason', 'escalate'].includes(env.ATOMIZE_TIER) ? env.ATOMIZE_TIER : 'escalate';
   const onFail = ['heuristic', 'escalate', 'error'].includes(env.ATOMIZE_ON_FAIL) ? env.ATOMIZE_ON_FAIL : 'heuristic';
   return { tier, onFail };
 }
 
 // Experiment knobs (T20):
-//   tier   — which model tier the draft runs on ('reason' = gpt-mini today;
-//            'escalate' = gpt-5.4 — the "fix this mess at the source" test).
+//   tier   — which model tier the draft runs on. DEFAULT 'escalate' = gpt-5.4
+//            (T30 decision 2026-06-08: gpt-mini retired from the pipeline — it
+//            returned empty on real big dumps and 5.4 is faster + no-worse).
+//            'reason' = gpt-mini is now opt-in only; 'classify' = gpt-nano.
 //   onFail — what happens when the model path produces nothing usable:
-//            'heuristic' (default, today), 'escalate' (one more attempt at
-//            tier escalate, then heuristic), or 'error' (no fallback — the
-//            UI shows the failure; for users who'd rather retry than wade
-//            through a heuristic spray).
-export async function atomizeEntry(entry, { projects = [], llmCall = null, tier = 'reason', onFail = 'heuristic' } = {}) {
+//            'heuristic' (default — the deterministic splitter), 'escalate'
+//            (one more attempt at tier escalate, then heuristic), or 'error'
+//            (no fallback — the UI shows the failure; for users who'd rather
+//            retry than wade through a heuristic spray).
+export async function atomizeEntry(entry, { projects = [], llmCall = null, tier = 'escalate', onFail = 'heuristic' } = {}) {
   if (llmCall) {
     // Kept defensive so a bad/empty model response degrades rather than
     // throwing into the request handler — but the degradation is no longer
