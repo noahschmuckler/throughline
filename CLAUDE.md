@@ -6,36 +6,54 @@ that aren't documented there or in the code — the deploy quirks, branch
 topology at time of writing, and patterns worth knowing before changing
 things.
 
-Snapshot date: 2026-06-07.
+Snapshot date: 2026-06-08.
 
 ## WHERE WE ARE NOW (read this first)
 
-**THE NEXT SESSION STARTS WITH NOAH'S ORANGE-TEST REPORT of sprint 1**
-("industrial ingestion", branch `industrial-ingestion`, built + pushed +
-headless-verified, 102/102 tests, NOT merged). He couldn't reach the
-machine at session end; the report opens the next session. Decision tree:
-- **Issues found** → fix on the branch (it's the active sprint branch).
-- **Pass** → merge to `main` → sprint retro → **publish chain** (merge ≠
-  deploy: run `deploy/publish-throughline.sh` on this box, push
-  meridian-briefing, CR DEV `git pull`s — only then does the install tile
-  serve the new build; consider fixing **T28** — the installer wipes
-  `data\jobs.json` incl. open consult sessions — BEFORE that first publish)
-  → **sprint 2 = the E3 design conversation** (VISION.md first: T11
-  keystone, T9/T19 inside, T17 after T26 proves out).
+**SPRINT 1 "industrial ingestion" + PHASE-0 FIXES — MERGED to `main` and
+PUBLISHED (v0.2.0, sha `b3f2f0d`, 2026-06-08).** Noah's orange test PASSED
+("working very well on real things"); fast-forward merged + run through the full
+publish chain (`deploy/publish-throughline.sh` → meridian-briefing `main`
+pushed). **Only remaining external step: CR DEV `git pull` to serve v0.2.0** (a
+separate static box this repo can't reach; until it pulls, the tile serves the
+prior build).
 
-**His orange test crib** (branch-run flow REQUIRED — server.js/lib/shared
-all changed; a `public\` copy is not enough): pull `industrial-ingestion`
-in the GitHub Desktop checkout → `schtasks /End /TN "ThroughlineServer"` →
-`node --env-file="$env:USERPROFILE\throughline\.env" server.js`. Test:
-several real braindumps atomized in PARALLEL → navigate away → return via
-the dashboard **Results strip**; full consult → decision set → review →
-**"↩ Back to chat"** → revised set → commit; the **T20 A/B** (add
-`ATOMIZE_TIER=escalate` and/or `ATOMIZE_ON_FAIL=escalate|error` to .env
-across a few dumps — does a 5.4 draft beat mini+heuristic? verdict decides
-T20's close and whether T7 dissolves). NB this run ALSO covers the
-post-T13 quick wins merged to main without an orange retest (dedup gate,
-program-grouped pickers, back-to-program nav, engine-name header, T20
-diagnostics eyebrow).
+**Settled / changed this session (2026-06-08, all on `main`):**
+- **gpt-mini RETIRED from the pipeline** (closes T30/T20, downgrades T7). A
+  direct cdsapi probe (`scripts/test-cdsapi.ps1`, kept in the repo) proved mini
+  is alive but slower + no-better than gpt-5.4. Atomize now defaults to tier
+  `escalate` = **gpt-5.4** (`atomizeOpts` default flipped reason→escalate;
+  consult was already 5.4). mini kept on the gateway for future small tasks
+  (atoms→prose).
+- **Provider default flipped heuristic → cdsapi.** `.env.example` + the
+  installer fallback now ship `LLM_PROVIDER=cdsapi`, and an update MIGRATES an
+  existing `LLM_PROVIDER=heuristic` (the old default) → cdsapi, so a
+  non-technical user gets a working on-network model with zero `.env` editing.
+  NB Noah's OWN installed `.env` still read heuristic at session end (he updated
+  before the migration shipped) — it flips on his next update or a one-line edit.
+- **T31** decision-set reopen (`resumeReviewIfPending` in app.js), **T28**
+  installer preserves `data\` (jobs + consult sessions) on update — confirmed
+  live ("carried everything over"), **T32** tightened atom-kind prompt
+  definitions. New ticket **T37** logged (intake-type picker on Chat-about-this
+  → T29's first slice).
+
+**NEXT: sprint 2 = "Findability & Focus"** (NEW branch off `main`; full plan in
+TICKETS.md "Processing session 2026-06-08"): **T36** [high] search must match
+ACTION atoms not just project names (Noah's operational top ask), **T35** ☆
+queue toggle on People-view actions, **T33** drawer-open preserves scroll,
+**T34** [high, DESIGN-SPIKE FIRST] Organize mode + multiple named dashboard
+views (decide where per-user view membership/ordering live — couples to the
+per-user queue + multi-user/T3; the queue stays SHARED across views). **Then the
+E3 design conversation** (T11 keystone, T9/T19 inside, T17 after T26) as its own
+VISION.md track — deferred from the original "sprint 2" because the orange test
+surfaced concrete daily-use pain that outranks it.
+
+_(The sprint-1 orange-test crib + the T20 A/B that lived here are resolved — the
+test passed and the A/B verdict (retire mini, atomize on gpt-5.4) is in the
+settled items above. Branch-run preview flow for future sprints is unchanged:
+pull the feature branch in the GitHub Desktop checkout → `schtasks /End /TN
+"ThroughlineServer"` → `node --env-file="$env:USERPROFILE\throughline\.env"
+server.js`; Ctrl+C + `schtasks /Run` to restore.)_
 
 Backdrop: **the ingestion epic (v1 consult → v2 decisions-back-in → T13
 native gpt-5.4 engine) is SHIPPED, live-verified, and MERGED to `main`**
@@ -45,9 +63,9 @@ jobs store on update), **T29** (intake-type diversity: email threads,
 meeting summaries, cdsapi-attachments probe — design marker for when
 T27/T6 land).
 
-**SPRINT 1 "industrial ingestion" — BUILT (2026-06-07, branch
-`industrial-ingestion`, 102/102 tests, NOT merged — needs Noah's review +
-orange live test).** What shipped (commit per ticket, headless-verified):
+**SPRINT 1 "industrial ingestion" — MERGED to `main` + PUBLISHED (v0.2.0,
+2026-06-08; orange test PASSED).** 8 commits; what shipped per ticket
+(headless-verified + live-confirmed):
 - **T16 — async ingestion.** `lib/jobs.js`: machine-local `{jobs, sessions}`
   store at `THROUGHLINE_JOBS` (default `./data/jobs.json` — deliberately NOT
   beside the OneDrive-synced state.json; one operator's work artifacts must
@@ -87,12 +105,14 @@ orange live test).** What shipped (commit per ticket, headless-verified):
   state.json loudly; save toast shows the server's real error), T2
   (writeState rename-retry on OneDrive lock codes + logged direct-write
   fallback).
-**Open queue after sprint 1** (full detail in TICKETS.md): the E3 family
-(T11 keystone epic, T9 loop-table, T19 chat-driven mutations) = sprint 2;
-T17 (full session persistence/forking — T26 is its proven v1); T27
-(dethreader, floats); T28 (installer wipes jobs store); T29 (intake-type
-diversity marker); T7 (parked pending the T20 A/B verdict); T3/T5-rest/T6
-(parked architecture/epic remainders).
+**Open queue after sprint 1** (full detail in TICKETS.md): **sprint 2 =
+"Findability & Focus"** (T36 action search, T35 People queue, T33 drawer scroll,
+T34 organize/multi-dashboard — design-spike first); the **E3 family** (T11
+keystone epic, T9 loop-table, T19 chat-driven mutations, T17 forkable sessions)
+is the design-conversation track AFTER sprint 2; T27 (dethreader, floats); T29
++ T37 (intake-type diversity + the doc-type picker); T7 (downgraded — re-judge
+after a real 5.4-atomize run); T3/T5-rest/T6 (parked architecture/epic
+remainders). T28/T31/T32 shipped in Phase 0 above.
 
 Post-T13 quick wins shipped 2026-06-07 (same branch): **chat markdown
 rendering** (T14 — escape-first `mdToHtml`, assistant bubbles only);
@@ -252,20 +272,21 @@ until he triggers a *processing session* (triage → prioritize → plan a sprin
 clear). The file's header documents the format and workflow. (The larger
 deferred V1+ backlog lives in `BUILDPATH.md` §H.)
 
-## Branch topology (as of 2026-06-07 evening)
+## Branch topology (as of 2026-06-08)
 
-- **`main`** — carries the full collapsed lineage (on 2026-06-07 the historic
-  six-branch stack was merged/deleted local + remote at Noah's request):
-  the demo seeder, the Ad-hoc/Inbox flow, V1 (programs, frameworks, wizard,
-  RAG, Node server, cdsapi/anthropic providers, playground reskin, .md
-  import), Epic E1 (folder lens, convert project⇄reference, atom retype),
-  E1.5 (installer + setup wizard + meridian-briefing launcher tile — live on
-  both orange boxes), and the full AI-ingestion epic (v1 consult + v2
-  decisions-back-in + T13 native gpt-5.4 engine + the run-feedback fixes).
-- **`industrial-ingestion`** (origin, **the active sprint branch**) — branched
-  off `main`. Sprint 1 complete on it (8 commits: T1+T2, T20, T18, T10, T22,
-  T16a, T16b+T26, docs — see "WHERE WE ARE NOW"). **Awaiting Noah's orange
-  test; NOT merged.**
+- **`main`** — carries the full collapsed lineage plus **sprint 1 "industrial
+  ingestion" + the 2026-06-08 Phase-0 fixes** (merged fast-forward + published
+  as v0.2.0). Earlier lineage (on 2026-06-07 the historic six-branch stack was
+  merged/deleted local + remote): the demo seeder, the Ad-hoc/Inbox flow, V1
+  (programs, frameworks, wizard, RAG, Node server, cdsapi/anthropic providers,
+  playground reskin, .md import), Epic E1 (folder lens, convert
+  project⇄reference, atom retype), E1.5 (installer + setup wizard +
+  meridian-briefing launcher tile — live on both orange boxes), and the full
+  AI-ingestion epic (v1 consult + v2 decisions-back-in + T13 native gpt-5.4
+  engine + the run-feedback fixes).
+- **`industrial-ingestion`** — sprint 1's branch; **merged to `main` (fast-
+  forward) and DELETED local + remote on 2026-06-08.** Its history lives in
+  `main`. Sprint 2 starts on a fresh branch.
 
 **Workflow: every new piece of work gets a NEW branch off up-to-date
 `main`**, merged back after Noah's review. Pushing `main` and feature
