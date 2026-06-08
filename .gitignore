@@ -1,4 +1,7 @@
 node_modules/
+# wrangler's lockfile — pins only the dev-only Cloudflare toolchain (no runtime
+# deps ship; the Node server has none). Local-only, like node_modules/.
+package-lock.json
 .wrangler/
 .dev.vars
 .env
