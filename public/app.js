@@ -1201,6 +1201,18 @@ function renderPeopleView(body) {
       if (e) { location.hash = `#/c/${encodeURIComponent(e.container_id)}`; setTimeout(() => openEntryDrawer(e.container_id, e.id, a.id), 60); }
     };
   });
+  // T35: ☆ queue toggle on each People-view action row (same next-action queue
+  // as the dashboard — keep the summary count in sync).
+  body.querySelectorAll('[data-pq-queue]').forEach(el => {
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      const a = state.atoms.find(x => x.id === el.dataset.pqQueue);
+      if (!a) return;
+      toggleQueued(a);
+      renderHomeView();
+      renderHomeSub();
+    };
+  });
 }
 
 function renderPersonDetail(person) {
@@ -1218,6 +1230,7 @@ function renderPersonDetail(person) {
           <div class="paction-proj">${escHtml(container.title)}</div>
         </div>
         <span class="due-badge" style="color:${overdue ? TONE.r.t : TONE.a.t};background:${overdue ? TONE.r.b : TONE.a.b}">${overdue ? '⚠ Overdue' : (atom.due_date ? 'Due ' + fmtDate(atom.due_date) : 'No date')}</span>
+        <button class="btn ghost tiny queue-btn${atom.queued ? ' on' : ''}" data-pq-queue="${escHtml(atom.id)}" title="${atom.queued ? 'Remove from the next-actions queue' : 'Add to the next-actions queue'}">${atom.queued ? '★ queued' : '☆ queue'}</button>
         <button class="btn tiny" data-open-entry="${escHtml(atom.id)}">Open</button>
       </div>`).join('') : `<div class="empty muted small">No open actions assigned.</div>`;
   } else {
