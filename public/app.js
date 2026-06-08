@@ -18,7 +18,7 @@ let state = emptyState();
 let saveTimer = null;
 let lastSavedAt = null;
 let currentDrawerEntryId = null;
-const homeFilters = { search: '', activeTags: new Set() };
+const homeFilters = { search: '', activeTags: new Set(), actionFilters: { overdue: false, dueSoon: false, unqueued: false } };
 
 // Dashboard view state (home toggle + per-person/per-project tab selections).
 const ui = { homeView: 'projects', personId: null, personTab: 'actions', projectTab: 'overview' };
@@ -697,10 +697,22 @@ function renderHomeProjects(body) {
   search.value = homeFilters.search;
   search.oninput = () => {
     homeFilters.search = search.value.toLowerCase();
+    renderActionResults();
     renderProjectGrid();
     renderHomeBody();
   };
+  // T36: action-filter chips (overdue / due-soon / not-queued) drive the
+  // matching-actions search surface.
+  const af = document.getElementById('action-filters');
+  if (af) af.querySelectorAll('[data-afilter]').forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.afilter;
+      homeFilters.actionFilters[k] = !homeFilters.actionFilters[k];
+      renderActionResults();
+    };
+  });
   renderHomeTagChips();
+  renderActionResults();
   renderNextActions();
   renderProjectGrid();
   renderHomeBody();
@@ -826,6 +838,82 @@ function renderNextActions() {
       ev.stopPropagation();
       const a = state.atoms.find(x => x.id === btn.dataset.nqUnqueue);
       if (a) { toggleQueued(a); renderNextActions(); renderHomeSub(); }
+    };
+  });
+}
+
+// T36: open actions matching the dashboard search + action filters — the
+// find-and-queue surface (the search box now spans projects AND actions).
+// Searches action body + assigned_to; chips narrow by overdue / due-soon /
+// not-yet-queued. Same open-action rule as the queue. Empty unless there's a
+// query or an active filter (so the default dashboard stays uncluttered).
+function matchingActions() {
+  const q = homeFilters.search;
+  const f = homeFilters.actionFilters;
+  if (!q && !f.overdue && !f.dueSoon && !f.unqueued) return [];
+  const soon = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+  const archived = new Set(state.containers.filter(c => c.status === 'archived').map(c => c.id));
+  const entryById = new Map(state.entries.map(e => [e.id, e]));
+  return state.atoms
+    .filter(a => a.kind === 'action' && !outcomeForAction(a.id))
+    .filter(a => { const e = entryById.get(a.entry_id); return e && !archived.has(e.container_id); })
+    .filter(a => {
+      if (q && !`${a.body || ''} ${a.assigned_to || ''}`.toLowerCase().includes(q)) return false;
+      if (f.overdue && !isOverdue(a)) return false;
+      if (f.dueSoon && !(a.due_date && a.due_date <= soon)) return false;
+      if (f.unqueued && a.queued) return false;
+      return true;
+    })
+    .sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || (b.updated_at || '').localeCompare(a.updated_at || ''));
+}
+
+// T36: render the matching-actions results list (shown only when searching or
+// filtering). Each row mirrors a next-actions row + a ☆ queue toggle, so the
+// flow is: search "email" -> see every open email action -> star the ones to do.
+function renderActionResults() {
+  const host = document.getElementById('action-results');
+  if (!host) return;
+  const chips = document.getElementById('action-filters');
+  if (chips) chips.querySelectorAll('[data-afilter]').forEach(b =>
+    b.classList.toggle('active', !!homeFilters.actionFilters[b.dataset.afilter]));
+  const active = homeFilters.search || homeFilters.actionFilters.overdue
+    || homeFilters.actionFilters.dueSoon || homeFilters.actionFilters.unqueued;
+  if (!active) { host.innerHTML = ''; return; }
+  const actions = matchingActions();
+  const entryById = new Map(state.entries.map(e => [e.id, e]));
+  const rows = actions.map(a => {
+    const entry = entryById.get(a.entry_id);
+    const c = entry ? getContainer(entry.container_id) : null;
+    const prog = c?.program_id ? getContainer(c.program_id) : null;
+    const overdue = isOverdue(a);
+    return `<div class="nq-row" data-entry="${escHtml(a.entry_id)}" data-container="${escHtml(entry?.container_id || '')}" data-atom="${escHtml(a.id)}">
+      <span class="nq-body">${escHtml(a.body)}</span>
+      <span class="nq-meta">
+        ${c ? `<span class="nq-chip">${escHtml(prog ? `${prog.title} › ${c.title}` : c.title)}</span>` : ''}
+        ${a.assigned_to ? `<span class="nq-owner">${escHtml(a.assigned_to)}</span>` : ''}
+        ${a.due_date ? `<span class="due${overdue ? ' overdue' : ''}">${fmtDate(a.due_date)}</span>` : ''}
+        <button class="btn ghost tiny queue-btn${a.queued ? ' on' : ''}" data-ar-queue="${escHtml(a.id)}" title="${a.queued ? 'Remove from the next-actions queue' : 'Add to the next-actions queue'}">${a.queued ? '★ queued' : '☆ queue'}</button>
+      </span>
+    </div>`;
+  }).join('');
+  host.innerHTML = `
+    <h2 class="section-rule">⚡ Matching actions <span class="nq-count">${actions.length}</span></h2>
+    ${actions.length ? `<div class="nq-list">${rows}</div>` : '<p class="muted small ar-empty">No open actions match.</p>'}`;
+  host.querySelectorAll('.nq-row').forEach(row => {
+    row.onclick = (ev) => {
+      if (ev.target.closest('[data-ar-queue]')) return;
+      if (row.dataset.container && row.dataset.entry) openEntryDrawer(row.dataset.container, row.dataset.entry, row.dataset.atom);
+    };
+  });
+  host.querySelectorAll('[data-ar-queue]').forEach(btn => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      const a = state.atoms.find(x => x.id === btn.dataset.arQueue);
+      if (!a) return;
+      toggleQueued(a);
+      renderActionResults();
+      renderNextActions();
+      renderHomeSub();
     };
   });
 }

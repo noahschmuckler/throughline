@@ -86,11 +86,18 @@
           <input
             type="search"
             id="home-search"
-            placeholder="Search projects, reference files, tags…"
+            placeholder="Search projects & actions…"
             class="search-input"
           />
           <div class="tag-chips" id="home-tag-chips"></div>
+          <div class="action-filters" id="action-filters">
+            <span class="af-label">Open actions:</span>
+            <button type="button" class="tag-chip af-chip" data-afilter="overdue">Overdue</button>
+            <button type="button" class="tag-chip af-chip" data-afilter="dueSoon">Due ≤7d</button>
+            <button type="button" class="tag-chip af-chip" data-afilter="unqueued">Not queued</button>
+          </div>
         </div>
+        <div id="action-results"></div>
         <div id="next-actions"></div>
         <div class="tile-grid" id="project-grid"></div>
         <h2 class="section-rule">Inbox &amp; reference files</h2>
