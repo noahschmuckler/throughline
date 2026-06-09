@@ -1695,6 +1695,17 @@ main.main-ws { padding: 0; }
 .ws-tab-badge { font-size: 0.64rem; font-weight: 700; color: #fff; background: var(--a-tone); border-radius: 10px; padding: 0 6px; vertical-align: 1px; }
 .ws-bar-right { display: flex; align-items: center; gap: 10px; }
 
+/* M3 circle selector */
+.ws-circle { position: relative; display: flex; align-items: center; }
+.ws-circle-btn { font-family: var(--sans); font-size: 0.82rem; font-weight: 600; color: var(--thread); background: var(--thread-faint); border: 1px solid var(--thread-soft); border-radius: 999px; padding: 5px 13px; cursor: pointer; white-space: nowrap; }
+.ws-circle-btn:hover { background: #fff; }
+.ws-circle-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; background: var(--card); border: 1px solid var(--card-edge); border-radius: 9px; box-shadow: 0 12px 32px rgba(0,0,0,0.16); padding: 6px; display: flex; flex-direction: column; min-width: 200px; }
+.ws-circle-menu[hidden] { display: none; }
+.ws-circle-menu button { text-align: left; background: none; border: none; padding: 8px 12px; border-radius: 6px; font: inherit; font-size: 0.85rem; color: var(--ink); cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ws-circle-menu button:hover { background: var(--rail); }
+.ws-circle-menu button.on { color: var(--thread); font-weight: 700; }
+.ws-circle-you { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #fff; background: var(--teal); padding: 1px 6px; border-radius: 999px; }
+
 /* Split: left list + right detail, each its own scroll region. */
 .ws-split { flex: 1 1 auto; display: flex; min-height: 0; }
 .ws-left { flex: 0 0 34%; min-width: 320px; max-width: 384px; overflow-y: auto; border-right: 1px solid var(--card-edge); background: var(--rail); padding: 12px 12px 48px; }

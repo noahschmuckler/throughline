@@ -23,7 +23,7 @@ const homeFilters = { search: '', activeTags: new Set(), actionFilters: { overdu
 // Dashboard view state (home toggle + per-person/per-project tab selections).
 // homeTab = the right-panel home view (dashboard | next | activity); selectedCard
 // = the container shown in the right panel while the left list stays visible.
-const ui = { homeView: 'projects', homeTab: 'dashboard', selectedCard: null, personId: null, personTab: 'actions', projectTab: 'overview', shelf: null, organize: false };
+const ui = { homeView: 'projects', homeTab: 'dashboard', selectedCard: null, personId: null, personTab: 'actions', projectTab: 'overview', shelf: null, organize: false, circle: 'all' };
 
 // ---------- State + persistence ------------------------------------
 
@@ -67,6 +67,11 @@ function normalizeState(d) {
     entries:    Array.isArray(d?.entries)    ? d.entries    : [],
     atoms:      Array.isArray(d?.atoms)      ? d.atoms      : [],
     people_meta: d?.people_meta && typeof d.people_meta === 'object' ? d.people_meta : {},
+    // M3 circles: the federated GET attaches `circles[]` and tags each object
+    // with `_circle`; a single-folder install reports one circle. Defaulted so
+    // render code can rely on the shape.
+    circles: Array.isArray(d?.circles) ? d.circles : [],
+    workspace: (d?.workspace && typeof d.workspace === 'object') ? d.workspace : { id: null, name: '' },
   };
 }
 
@@ -90,6 +95,7 @@ function scheduleSave() {
 
 async function doSave() {
   setStatus('saving');
+  stampCircles();   // M3: route every object to its origin circle before the PUT splits by it
   try {
     const r = await fetch(STATE_URL, {
       method: 'PUT',
@@ -104,9 +110,85 @@ async function doSave() {
     }
     lastSavedAt = Date.now();
     setStatus('saved');
+    // M3/M1: the server returns the merged federated doc + any auto-resolved
+    // concurrent-edit conflicts. Keep the circle list fresh; surface conflicts.
+    const resp = await r.json().catch(() => ({}));
+    if (resp.state && Array.isArray(resp.state.circles)) state.circles = resp.state.circles;
+    if (Array.isArray(resp.conflicts) && resp.conflicts.length) {
+      showToast(`↔ ${resp.conflicts.length} concurrent-edit conflict${resp.conflicts.length === 1 ? '' : 's'} auto-resolved (newest kept)`);
+    }
   } catch (e) {
     console.error(e);
     setStatus('error', e.message);
+  }
+}
+
+// M3: pull peers' changes from the other circles without disrupting active
+// editing — only when nothing's open and there's no pending save. Bound to
+// window focus + a slow interval.
+let federatedRefreshing = false;
+async function refreshFederated() {
+  if (federatedRefreshing || saveTimer) return;          // not mid-edit / mid-save
+  if (anyOverlayOpen()) return;                            // don't yank the rug during a drawer/modal
+  federatedRefreshing = true;
+  try {
+    const r = await fetch(STATE_URL, { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const next = normalizeState(data);
+    if (federatedFingerprint(next) !== federatedFingerprint(state)) {
+      state = next;
+      render();
+    }
+  } catch { /* offline — keep what we have */ }
+  finally { federatedRefreshing = false; }
+}
+
+function anyOverlayOpen() {
+  return ['drawer-shroud', 'modal-shroud', 'triage-shroud', 'chat-shroud']
+    .some(id => { const el = document.getElementById(id); return el && !el.hidden; });
+}
+
+// Cheap content fingerprint (counts + latest touch) to detect a peer change.
+function federatedFingerprint(s) {
+  const last = (arr) => (arr || []).reduce((m, o) => (o.updated_at > m ? o.updated_at : m), '');
+  return [s.containers?.length, s.entries?.length, s.atoms?.length,
+    last(s.containers), last(s.entries), last(s.atoms)].join('|');
+}
+
+// ---------- Circles (M3) — active-circle filter + write routing ------------
+
+const CIRCLE_KEY = 'throughline:circle';   // per-user-local, like the T34 shelves
+function loadActiveCircle() { try { return localStorage.getItem(CIRCLE_KEY) || 'all'; } catch { return 'all'; } }
+function setActiveCircle(id) { ui.circle = id; try { localStorage.setItem(CIRCLE_KEY, id); } catch {} }
+function primaryCircleId() {
+  const cs = state.circles || [];
+  return (cs.find(c => c.primary) || cs[0] || {}).id || null;
+}
+// The circle a NEW top-level object lands in: the active circle, else primary.
+function targetCircle() {
+  if (ui.circle && ui.circle !== 'all' && (state.circles || []).some(c => c.id === ui.circle)) return ui.circle;
+  return primaryCircleId();
+}
+// Visible under the active circle? Untagged objects (single-circle installs)
+// always show.
+function inActiveCircle(o) {
+  return !ui.circle || ui.circle === 'all' || !o || !o._circle || o._circle === ui.circle;
+}
+// Before each save, ensure every object carries its origin circle: a new
+// top-level container → the active/target circle; entries inherit their
+// container's circle; atoms inherit their entry's container's circle. This is
+// the single choke-point — no creation site needs to know about circles.
+function stampCircles() {
+  if (!(state.circles || []).length) return;            // single-folder: nothing to tag
+  const def = targetCircle();
+  const cById = new Map(state.containers.map(c => [c.id, c]));
+  for (const c of state.containers) if (!c._circle) c._circle = def;
+  for (const e of state.entries) if (!e._circle) e._circle = cById.get(e.container_id)?._circle || def;
+  const eById = new Map(state.entries.map(e => [e.id, e]));
+  for (const a of state.atoms) if (!a._circle) {
+    const e = eById.get(a.entry_id);
+    a._circle = (e && cById.get(e.container_id)?._circle) || def;
   }
 }
 
@@ -517,6 +599,7 @@ function derivePeople() {
   };
   for (const c of state.containers) {
     if (c.status === 'archived') continue;
+    if (!inActiveCircle(c)) continue;
     for (const a of openActionsOf(c.id)) {
       const who = (a.assigned_to || '').trim();
       if (!who) continue;
@@ -551,10 +634,11 @@ function stringColor(s) {
 }
 
 function dashboardSummary() {
-  const ps = projects();
+  const ps = projects().filter(inActiveCircle);
   let open = 0, overdue = 0;
   for (const c of state.containers) {
     if (c.status === 'archived') continue;
+    if (!inActiveCircle(c)) continue;
     const o = openActionsOf(c.id);
     open += o.length;
     overdue += o.filter(isOverdue).length;
@@ -624,6 +708,7 @@ function renderWorkspace(main, r) {
   wireAddMenu();
   wireViewToggle();
   wireFileDrop();
+  renderCircleDropdown();
   renderWsTabs(r);
 
   // A selected container always shows the project card list on the left (so the
@@ -680,6 +765,45 @@ function wireAddMenu() {
   };
   menu.querySelectorAll('[data-act]').forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); menu.hidden = true; acts[b.dataset.act]?.(); };
+  });
+}
+
+// M3 circle selector — only shown when >1 circle is federated (a single-folder
+// install stays clutter-free). Filters the dashboard to one circle AND sets
+// where new projects land; "All circles" shows everything.
+function renderCircleDropdown() {
+  const host = document.getElementById('ws-circle');
+  if (!host) return;
+  const circles = state.circles || [];
+  if (circles.length < 2) { host.innerHTML = ''; return; }
+  if (ui.circle !== 'all' && !circles.some(c => c.id === ui.circle)) ui.circle = 'all';
+  const curName = ui.circle === 'all' ? 'All circles' : (circles.find(c => c.id === ui.circle)?.name || 'All circles');
+  host.innerHTML = `
+    <button class="ws-circle-btn" id="ws-circle-btn" aria-haspopup="true">◎ ${escHtml(curName)} ▾</button>
+    <div class="ws-circle-menu" id="ws-circle-menu" role="menu" hidden>
+      <button data-circle="all" class="${ui.circle === 'all' ? 'on' : ''}">All circles</button>
+      ${circles.map(c => `<button data-circle="${escHtml(c.id)}" class="${ui.circle === c.id ? 'on' : ''}">${escHtml(c.name)}${c.primary ? ' <span class="ws-circle-you">yours</span>' : ''}</button>`).join('')}
+    </div>`;
+  const btn = host.querySelector('#ws-circle-btn');
+  const menu = host.querySelector('#ws-circle-menu');
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    if (willOpen) {
+      const close = (ev) => { if (!menu.contains(ev.target) && ev.target !== btn) { menu.hidden = true; document.removeEventListener('click', close); } };
+      setTimeout(() => document.addEventListener('click', close), 0);
+    }
+  };
+  menu.querySelectorAll('[data-circle]').forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      setActiveCircle(b.dataset.circle);
+      ui.selectedCard = null;
+      if (location.hash.startsWith('#/c/')) location.hash = '#/';  // leave a project that may be in another circle
+      else render();
+    };
   });
 }
 
@@ -890,7 +1014,7 @@ function renderHomeSub() {
   const grid = document.getElementById('home-rag');
   if (grid) {
     const tops = state.containers.filter(c =>
-      c.status !== 'archived' && (c.type === 'program' || (c.type === 'project' && !c.program_id)));
+      c.status !== 'archived' && inActiveCircle(c) && (c.type === 'program' || (c.type === 'project' && !c.program_id)));
     const counts = { red: 0, amber: 0, green: 0 };
     for (const c of tops) counts[ragOf(c)]++;
     grid.innerHTML = ['red', 'amber', 'green']
@@ -1143,7 +1267,7 @@ function currentShelf() {
   return ui.shelf;
 }
 function topLevelTiles() {
-  return state.containers.filter(c => c.status !== 'archived'
+  return state.containers.filter(c => c.status !== 'archived' && inActiveCircle(c)
     && (c.type === 'program' || (c.type === 'project' && !c.program_id)));
 }
 function shelfCount(shelfId) {
@@ -1322,6 +1446,7 @@ function filterContainers(type = null) {
     if (c.type === 'inbox') return false; // Inbox lives in its own pinned row.
     if (type && c.type !== type) return false;
     if (c.status === 'archived') return false;
+    if (!inActiveCircle(c)) return false;   // M3: scope to the active circle (All = every circle)
     if (tags.size && ![...tags].every(t => (c.tags || []).includes(t))) return false;
     if (q) {
       const hay = [
@@ -1340,7 +1465,7 @@ function renderRecent() {
   const recent = [...state.entries]
     .filter(e => {
       const c = getContainer(e.container_id);
-      return c && c.status !== 'archived';
+      return c && c.status !== 'archived' && inActiveCircle(e);
     })
     .sort((a, b) => (b.occurred_at || '').localeCompare(a.occurred_at || ''))
     .slice(0, 8);
@@ -1539,17 +1664,17 @@ function fileIcon(ext) {
 async function renderFolderFiles(el, c) {
   if (!el || c.folder == null) return;
   el.innerHTML = `<div class="fs-tree"></div>`;
-  await mountFsLevel(el.querySelector('.fs-tree'), c.folder || '');
+  await mountFsLevel(el.querySelector('.fs-tree'), c.folder || '', c._circle);
 }
 
 // Load one folder's children into `mountEl` (folders first, then files). A
 // folder row toggles a nested child container, fetched lazily the first time
 // it's opened. Recurses to arbitrary depth.
-async function mountFsLevel(mountEl, path) {
+async function mountFsLevel(mountEl, path, circle) {
   mountEl.innerHTML = `<div class="muted small fs-loading">Loading…</div>`;
   let data;
   try {
-    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`);
+    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}${circle ? `&circle=${encodeURIComponent(circle)}` : ''}`);
     if (r.status === 501) { mountEl.innerHTML = `<div class="muted small">Live folder files are only available in the local app, not the cloud demo.</div>`; return; }
     if (r.status === 404) { mountEl.innerHTML = `<div class="folder-missing">⚠ Folder is missing on disk — re-bind or restore it.</div>`; return; }
     if (!r.ok) throw new Error(`list ${r.status}`);
@@ -1579,7 +1704,7 @@ async function mountFsLevel(mountEl, path) {
       const twisty = row.querySelector('.fs-twisty');
       if (!kids.hidden) { kids.hidden = true; twisty.textContent = '▸'; return; }
       kids.hidden = false; twisty.textContent = '▾';
-      if (!loaded) { loaded = true; await mountFsLevel(kids, childPath); }
+      if (!loaded) { loaded = true; await mountFsLevel(kids, childPath, circle); }
     };
     mountEl.appendChild(row);
     mountEl.appendChild(kids);
@@ -1590,18 +1715,18 @@ async function mountFsLevel(mountEl, path) {
     row.className = 'fs-row fs-file';
     row.title = `Open ${f.name} in its app`;
     row.innerHTML = `<span class="fs-twisty"></span><span class="fs-icon">${fileIcon(f.ext)}</span><span class="fs-name">${escHtml(f.name)}</span><span class="folder-meta">${fmtBytes(f.size)}</span>`;
-    row.onclick = () => openBoundFile(filePath);
+    row.onclick = () => openBoundFile(filePath, circle);
     mountEl.appendChild(row);
   }
 }
 
 // Open a bound file in its native app (Excel/Word/…) via the local server,
 // instead of downloading it. Local-Node only — the cloud demo 501s.
-async function openBoundFile(path) {
+async function openBoundFile(path, circle) {
   try {
     const r = await fetch('/api/fs/open', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, circle }),
     });
     if (r.status === 501) { alert('Opening files in their native app is only available in the local app, not the cloud demo.'); return; }
     if (!r.ok) { const e = await r.json().catch(() => ({})); alert(e.error || "Couldn't open that file."); return; }
@@ -4971,7 +5096,7 @@ async function dominantBoundFileRefs(draftAtoms) {
   const c = getContainer(dominant);
   if (!c || c.folder == null) return [];
   try {
-    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(c.folder || '')}`);
+    const r = await fetch(`/api/fs/list?path=${encodeURIComponent(c.folder || '')}${c._circle ? `&circle=${encodeURIComponent(c._circle)}` : ''}`);
     if (!r.ok) return [];
     const data = await r.json();
     return (data.files || []).map((f, i) => ({
@@ -5598,8 +5723,13 @@ function openDecisionsReview(stash, decisions, { engine = null, serverSessionId 
     meta.textContent = `Dyad workspace · ${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
   }
   document.getElementById('hdr-settings')?.addEventListener('click', openSettingsModal);
+  ui.circle = loadActiveCircle();
   await loadState();
   await probeJobs(); // T16: 200 = async jobs available; 501/fail = sync fallback
   await maybeRedirectToSetup();
   render();
+  // M3: pull peers' changes from other circles when the window regains focus and
+  // on a slow tick (guarded against active editing inside refreshFederated).
+  window.addEventListener('focus', refreshFederated);
+  setInterval(refreshFederated, 30000);
 })();

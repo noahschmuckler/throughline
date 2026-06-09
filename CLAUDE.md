@@ -679,6 +679,20 @@ Authoritative source: `public/app.js` (vanilla DOM, single-file SPA,
 hash-routed) and `src/index.js` (Worker stub; only `/api/state` is
 handled, everything else is static assets).
 
+**M3 circles (2026-06-09):** the Node backend now **federates N circles** (one
+shared OneDrive folder + `Throughline/state.json` each). Each state doc carries
+a self-declared top-level `workspace:{id,name}` (id minted once in
+`lib/circles.js`, portable). `GET /api/state` unions every circle and tags each
+container/entry/atom with a runtime `_circle` id (+ a `circles[]` list);
+`PUT /api/state` splits back by `_circle`, **3-way merges each circle vs disk**
+(`shared/merge.js` + machine-local snapshots in `data/circle_snapshots/`) and
+returns the merged doc + conflicts. `_circle` is NEVER persisted (stripped per
+file). `lib/federation.js` is the seam; `lib/store.js` gained
+`readStateAt`/`writeStateAt`. A single-folder install (no
+`THROUGHLINE_CIRCLES_ROOT`) is a one-circle registry → unchanged behavior. The
+**Worker stays single-circle** (no filesystem; `circles[]` absent → front-end
+hides the dropdown). Full design + deferred pieces: `VISION.md` §M3.
+
 - **State doc** (KV key `throughline:state`, or the Node JSON file):
   `{ schema_version: 3, containers[], entries[], atoms[], people_meta{} }`.
   **v3 is backward-compatible** (as v2 was): both backends + `normalizeState`

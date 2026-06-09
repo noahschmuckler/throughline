@@ -252,7 +252,29 @@ being optional. Stages:
   remains here is the *multi-workspace* onboarding (a new user joining several
   circles) and folding in loop-de-loop's Graph-access-request wizard (T6).
 
-### Circles — the M3 design (worked out 2026-06-05, then PAUSED)
+### Circles — the M3 design (worked out 2026-06-05; MVP BUILT 2026-06-09)
+
+**M3 MVP + M1 merge SHIPPED on `findability-focus` (2026-06-09):** circle = a
+OneDrive folder with `Throughline/state.json` carrying a self-declared
+`workspace:{id,name}` (id minted+persisted once, portable). `lib/circles.js`
+discovers circles by scanning `THROUGHLINE_CIRCLES_ROOT` (default = parent of
+`ONEDRIVE_ROOT`) for `*/Throughline/state.json` (reparse-resolved shortcuts).
+`lib/federation.js`: GET unions every circle tagged by `_circle`; PUT splits
+back by `_circle`, **3-way merges (M1) each circle vs disk** (base = a
+machine-local snapshot; disjoint adds/edits/deletes lossless; same-field
+conflicts → newer `updated_at`, recorded) and writes only changed circles.
+Front-end: a circle dropdown (All + per circle) filters the dashboard + routes
+new objects; `stampCircles()` tags at save (entries inherit their container's
+circle, atoms their entry's); a focus/interval refresh pulls peers' changes; the
+folder lens is circle-aware (`/api/fs/*?circle=`). Pure merge in `shared/merge.js`
+(`test/merge.test.mjs`); federation round-trip in `test/circles.test.mjs`.
+**Deferred (still M3+):** cross-circle programs (personal workspace), in-app
+cross-circle MOVE, the `members[]` "Shared with:" label, **M2** conflict-
+resolution UI (conflicts are recorded + toasted, not yet individually
+resolvable), **M0** per-user authorship (merge tie-breaks on `updated_at`).
+The original design (for the deferred pieces) follows.
+
+
 
 The load-bearing fact: **a OneDrive shared folder is the atomic unit of access —
 sharing cascades down with no reliable sub-restriction** (enterprise ODB is

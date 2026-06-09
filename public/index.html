@@ -61,6 +61,7 @@
         <div class="ws-bar">
           <div class="ws-tabs" id="ws-tabs" role="tablist"></div>
           <div class="ws-bar-right">
+            <div class="ws-circle" id="ws-circle"></div>
             <div class="add-wrap">
               <button class="btn primary add-btn" id="ws-add-btn" aria-haspopup="true">＋ Add ▾</button>
               <div class="add-menu" id="ws-add-menu" role="menu" hidden>
@@ -72,7 +73,11 @@
                 <button data-act="import-file" role="menuitem">⤓ Import .md…</button>
                 <button data-act="paste-copilot" role="menuitem">📋 Paste from Copilot</button>
                 <button data-act="dethreader" role="menuitem">🧵 Dethreader (Outlook)</button>
-                <button data-act="loop" role="menuitem">🔁 Loop (OneDrive)</button>
+                <!-- 🔁 Loop (OneDrive) shelved pending T41: the Graph format=html
+                     render fails behind corporate TLS inspection (Zscaler) until
+                     the server launches with --use-system-ca. Code + endpoints
+                     remain; re-add this button once the installer is wired. -->
+                <!-- <button data-act="loop" role="menuitem">🔁 Loop (OneDrive)</button> -->
               </div>
             </div>
             <div class="view-toggle" id="home-view-toggle" role="tablist">

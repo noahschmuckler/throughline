@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 import { readState, writeState, dbPath } from './lib/store.js';
+import { loadFederated, saveFederated } from './lib/federation.js';
+import { discoverCircles, circleById } from './lib/circles.js';
 import { listFolder, openFile } from './lib/files.js';
 import { setupStatus, listSetupFolder, bindFolder, dbInfo } from './lib/setup.js';
 import { atomizeEntry, atomizeOpts } from './shared/atomize.js';
@@ -86,15 +88,19 @@ async function serveStatic(req, res, pathname) {
 const llmCall = makeLLMCall(process.env);
 
 async function handleState(req, res) {
+  // M3 federation: GET unions every circle (tagged by origin); PUT splits back
+  // by `_circle`, 3-way merges each circle vs disk (M1), and returns the merged
+  // federated doc + any auto-resolved conflicts. A single-folder install yields a
+  // one-circle registry, so behavior is unchanged there.
   if (req.method === 'GET') {
-    return sendJson(res, 200, await readState());
+    return sendJson(res, 200, await loadFederated());
   }
   if (req.method === 'PUT') {
     let body;
     try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
     if (!body || typeof body !== 'object') return sendJson(res, 400, { error: 'body must be an object' });
-    await writeState(body);
-    return sendJson(res, 200, { ok: true, saved_at: new Date().toISOString() });
+    const { state, conflicts } = await saveFederated(body);
+    return sendJson(res, 200, { ok: true, saved_at: new Date().toISOString(), state, conflicts });
   }
   return sendJson(res, 405, { error: `${req.method} not allowed` });
 }
@@ -295,11 +301,20 @@ async function serveAttachment(req, res, pathname) {
 // Folder-lens (Epic E1) — LOCAL ONLY. The Worker 501s these (no filesystem in
 // the cloud). Every path is root-relative and validated inside ONEDRIVE_ROOT by
 // lib/files.js before any disk access; an escape attempt → 400, missing → 404.
+// M3: resolve a circle's lens root from its id (its bindings are relative to it).
+// No id / unknown id → the default ONEDRIVE_ROOT (single-circle behavior).
+async function circleRootFor(circleId) {
+  if (!circleId) return undefined;
+  const reg = await discoverCircles();
+  return (circleById(reg, circleId) || {}).root;
+}
+
 async function handleFsList(req, res, url) {
   if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
   const rel = url.searchParams.get('path') || '';
   try {
-    return sendJson(res, 200, await listFolder(rel));
+    const root = await circleRootFor(url.searchParams.get('circle'));
+    return sendJson(res, 200, await listFolder(rel, root || undefined));
   } catch (err) {
     if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'folder not found' });
     if (/escapes ONEDRIVE_ROOT|absolute path not allowed|must be a string/.test(err.message)) {
@@ -319,7 +334,8 @@ async function handleFsOpen(req, res) {
   const rel = typeof body?.path === 'string' ? body.path : '';
   if (!rel) return sendJson(res, 400, { error: 'path required' });
   try {
-    return sendJson(res, 200, await openFile(rel));
+    const root = await circleRootFor(typeof body?.circle === 'string' ? body.circle : '');
+    return sendJson(res, 200, await openFile(rel, root || undefined));
   } catch (err) {
     if (err.code === 'ENOENT') return sendJson(res, 404, { error: 'file not found' });
     if (/escapes ONEDRIVE_ROOT|absolute path not allowed|must be a string|not a file/.test(err.message)) {
