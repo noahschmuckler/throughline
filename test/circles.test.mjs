@@ -68,6 +68,24 @@ test('a new project tagged for circle B is written ONLY to B', async () => {
   });
 });
 
+test('a blank state.json in one circle loads as empty, does NOT blank the others (T38)', async () => {
+  await withTwoCircles(async ({ pathB }) => {
+    await writeFile(pathB, '', 'utf8');   // user touched an empty file in the new circle
+    const fed = await loadFederated();    // must not throw
+    assert.ok(fed.containers.find(c => c.id === 'a_proj'), 'circle A still loads');
+    assert.equal(fed.circles.length, 2, 'circle B still listed (empty)');
+    // The blank circle now has a STABLE minted id (initialized on load).
+    const bCircle = fed.circles.find(c => !c.primary);
+    assert.ok(bCircle.id, 'blank circle got a stable id');
+    assert.ok(JSON.parse(await readFile(pathB, 'utf8')).workspace.id, 'id persisted to the file');
+    // Creating a project in the blank circle routes to its file.
+    fed.containers.push({ id: 'b_first', type: 'project', title: 'First in B', _circle: bCircle.id, updated_at: '2026-06-09T00:00:00Z' });
+    await saveFederated(fed);
+    const b = JSON.parse(await readFile(pathB, 'utf8'));
+    assert.ok(b.containers.find(c => c.id === 'b_first'), 'project lands in the formerly-blank circle');
+  });
+});
+
 test('an external concurrent edit to circle B is merged in, not clobbered', async () => {
   await withTwoCircles(async ({ pathB }) => {
     // First save establishes the snapshot baseline for both circles.
