@@ -10,42 +10,84 @@ Snapshot date: 2026-06-09.
 
 ## WHERE WE ARE NOW (read this first)
 
-**SPRINT 2 "Findability & Focus" — BUILT on branch `findability-focus`
-(2026-06-09, pushed, headless-verified, NOT merged — awaiting Noah's orange
-test).** Pure front-end (`public/app.js`, `index.html`, `styles.css`), so a
-preview is a `public\` copy over the install (hard-refresh Ctrl+Shift+R) OR the
-branch-run. Built to relieve two pains Noah hit using v0.2.0 — a growing,
-overwhelming project list and too many open actions to find the ones to do:
-- **T36** — the dashboard search now spans **actions**, not just project names:
-  `matchingActions()` finds open action atoms by body + `assigned_to`, with
-  **Overdue / Due≤7d / Not-queued** filter chips; a "⚡ Matching actions" list
-  (shown only while searching/filtering) carries a ☆ queue toggle + click-
-  through. Search "email" → star the ones to do.
-- **T35** — the ☆ next-action queue toggle is now on **People-view** action rows.
-- **T34** — **Organize mode + named dashboard "shelves" (views).** Tabs above the
-  grid; one shelf per top-level tile (default Main); **"All" always shows
-  everything**. ⚙ Organize makes tiles draggable: drag onto a view tab to file it
-  (e.g. "Back burner"), drag to reorder; create/rename/delete views, set the
-  landing view. **Stored in localStorage — per-user/per-browser** (organizing is
-  personal, must not reshape the other operator's board — like the profile name;
-  revisit with multi-user circles / M3). Search transcends shelves (a filed-away
-  project stays findable); the **queue + action search stay GLOBAL** (Noah's
-  constraint).
-- **T33** — expanding an item in the decision review no longer jumps the
-  viewport to the top (`renderTriage` preserves `.t-clusters` scroll).
-Full plan: TICKETS.md "Processing session 2026-06-08". Headless-verified the
-render/structure of all four; the **drag-and-drop (T34)** and **scroll-on-expand
-(T33)** want Noah's eyes on real use.
+**Branch `findability-focus` has grown WAY past the original sprint 2 — it now
+carries a whole arc of work (2026-06-09 session), pushed, tested-as-it-went on
+orange, NOT yet merged to `main`. Latest commit `16ec778`.** It is **no longer
+front-end-only** (server.js + new deps), so an orange preview is the
+**branch-run** flow (NOT a `public\` copy): `git pull` → `npm ci` (or copy
+`node_modules` — see below) → stop the `ThroughlineServer` task →
+`node --env-file=… server.js` from the checkout. What's on the branch, oldest→
+newest:
 
-**Decision tree (opens next session) — orange test of `findability-focus`:**
-- **Pass** → merge → `main` (fast-forward) → publish chain
-  (`deploy/publish-throughline.sh` → push meridian-briefing → CR DEV `git pull`s)
-  → ships as the next v0.2.0 build.
-- **Issues** → fix on the branch.
-Then **next sprint candidates**: the **E3 design conversation** (T11 keystone,
-T9/T19, T17 — its own VISION.md track); **T37** (intake-type picker); **T38**
-(store 500s on a 0-byte state.json — robustness); **T27** (dethreader, floats);
-**T7** re-judge after a real 5.4-atomize run.
+1. **Sprint 2 "Findability & Focus" (T33–T36)** — action-spanning dashboard
+   search (`matchingActions()` + Overdue/Due≤7d/Not-queued chips + "⚡ Matching
+   actions"); ☆ queue toggle on People rows; **Organize mode + named dashboard
+   "shelves"** (localStorage, per-user); decision-review scroll-preserve.
+2. **T40 — meridian-os shell REDESIGN (the big one).** The home is now a
+   3-panel workspace (narrow navy bar → teal-underline tab strip
+   Dashboard/Next/Activity + a ＋Add menu + Projects/People toggle → left ~⅓
+   card list of programs/projects/inbox/references, own scroll → right ⅔ detail,
+   own scroll). `#/c/<id>` renders inside the right panel with the list still
+   visible. Borrowed from `GitHub_Repos/meridian-os` medical-director view.
+   Tiles → compact `.ws-card`s; the old vertical-stack dashboard is gone.
+   **Live-tested by Noah: working well.**
+3. **T27 — Dethreader** (🧵 Add-menu). `POST /api/dethreader` runs the bundled
+   `dethreader.ps1` (Outlook COM → exports the selected thread to
+   `Desktop\email-exports\…` md+attachments), reads the md, drops it into a new
+   **email** Inbox entry. Windows-only; `THROUGHLINE_DETHREADER_DRYRUN=1` stubs
+   it. **Live-tested.**
+4. **Outcome-atom prompt fix** — the consult/decision-set prompts no longer
+   advertise `outcome` (the gate coerces it → observation; nothing could close a
+   pending action). Full feature deferred = **T40 ticket** (let the decision set
+   close pending actions — needs exposing open actions to the LLM without
+   mis-closing semantically-similar ones).
+5. **T29/Loop import + device-code auth wizard** — 🔁 Loop pulled a Microsoft
+   Loop `.loop` via Graph `format=html` → turndown → md → intake, with the
+   ported `loop_de_loop` MSAL device-code **sign-in wizard** (welcome→code→
+   success→error, Approval-Required help). **THE 🔁 LOOP BUTTON IS SHELVED**
+   (commented out in `index.html`; code + `/api/loop/*` endpoints intact)
+   pending **T41**: it dies behind Optum's **Zscaler TLS inspection**
+   (`UNABLE_TO_GET_ISSUER_CERT_LOCALLY` on the SPO media host). Fix = launch
+   with **`--use-system-ca`** (Node ≥ 22.15 — reads the Windows store where the
+   Zscaler root already lives; orange's Node was 22.6.0 → needs a bump) baked
+   into the installer task. This is why the server gained deps (next bullet).
+6. **M3 CIRCLES (MVP federation) + M1 concurrent-edit 3-way merge.** Multiple
+   OneDrive shared folders (each `Throughline/state.json` with a self-declared
+   `workspace:{id,name}`) federate into one dashboard; a circle dropdown filters
+   + routes new work; `PUT` splits by `_circle`, 3-way merges each circle vs disk
+   (`shared/merge.js` + machine-local snapshots in `data/circle_snapshots/`), and
+   returns merged+conflicts. New: `lib/circles.js`, `lib/federation.js`,
+   `shared/merge.js`, `lib/store.js readStateAt/writeStateAt`. Plus an in-app
+   **"Move to circle"** action (Edit modal) and a **blank-file robustness fix**
+   (T38 — a 0-byte circle state.json no longer crashes the federated load; new
+   circle files auto-initialize with a stable id). Full design + the deferred
+   pieces: **VISION.md §M3**. **Live-tested by Noah** (set up Amanda's "crhc uc"
+   circle; the blank-file bug was found + fixed live).
+
+**DEPS CHANGED — the server is NO LONGER zero-dependency.** Loop added
+`@azure/msal-node` + `turndown`. `deploy/bundle.sh` now **vendors a prod-only
+`node_modules`** (~19 MB → 4.1 MB zip), `package-lock.json` is **tracked**. On
+orange `npm ci` against Optum's internal registry is flaky (TLS) — easiest is to
+**copy the WHOLE `node_modules`** from the built bundle (or from the
+`loop_de_loop` install — same packages). Copying only a few dirs fails (msal-node
+needs `@azure/msal-common` + `jsonwebtoken`'s whole subtree).
+
+**Decision tree (next session):**
+- **Finish orange-testing the full branch** (the redesign + dethreader passed;
+  circles is set up; Loop is shelved). On a clean pass → **merge → `main`
+  (fast-forward) → publish chain** (`deploy/publish-throughline.sh` → push
+  meridian-briefing → CR DEV `git pull`s) → next v0.2.0+ build. Issues → fix on
+  the branch.
+- **To enable circles on orange:** set `THROUGHLINE_CIRCLES_ROOT` in `.env` to
+  the OneDrive top level that holds BOTH shared folders as immediate subfolders.
+  Don't hand-create `state.json` (auto-initialized now). Move UC projects out of
+  Natalia's circle via the Edit-modal **Move to circle** (clears the folder
+  binding — files stay put — and program membership).
+- **T41 (Loop TLS)** before re-surfacing the Loop button.
+- Open tickets logged this session: **T39** (OneNote export of a dashboard
+  shelf), **T40** (decision-set close-pending-actions via outcomes), **T41**
+  (Loop behind corporate TLS). Older candidates still open: E3 family (T11/T9/
+  T19/T17), T37 (intake picker), T7 (re-judge 5.4 atomize).
 
 **Already shipped — SPRINT 1 "industrial ingestion" + Phase-0 fixes: MERGED to
 `main` + PUBLISHED (v0.2.0, sha `b3f2f0d`, 2026-06-08); orange test PASSED
@@ -297,9 +339,14 @@ deferred V1+ backlog lives in `BUILDPATH.md` §H.)
   engine + the run-feedback fixes).
 - **`industrial-ingestion`** — sprint 1's branch; **merged to `main` (fast-
   forward) and DELETED local + remote on 2026-06-08.** Its history lives in `main`.
-- **`findability-focus`** (origin, **the active sprint branch**) — branched off
-  `main`. Sprint 2 complete on it (T36, T35, T33, T34 + the T34 design spike;
-  pushed, headless-verified). **Awaiting Noah's orange test; NOT merged.** On a
+- **`findability-focus`** (origin, **the active branch — grew far past sprint
+  2**) — branched off `main`. Now carries sprint 2 (T33–36) **+ the T40
+  meridian-os shell redesign + T27 dethreader + the outcome-prompt fix + Loop
+  import & auth wizard (button shelved, T41) + M3 circles MVP & M1 merge + the
+  T38 blank-file fix + cross-circle Move.** Server-touching + new runtime deps
+  (`@azure/msal-node`, `turndown`) → **branch-run required** to preview (not a
+  `public\` copy). Tested-as-it-went on orange; **NOT merged.** See "WHERE WE
+  ARE NOW" for the full arc + the merge/publish decision tree. On a clean orange
   pass: fast-forward merge → publish chain → delete the branch.
 
 **Workflow: every new piece of work gets a NEW branch off up-to-date
