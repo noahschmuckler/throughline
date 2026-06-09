@@ -86,6 +86,30 @@ test('a blank state.json in one circle loads as empty, does NOT blank the others
   });
 });
 
+test('moving a container subtree between circles re-routes it (out of A, into B)', async () => {
+  await withTwoCircles(async ({ pathA, pathB }) => {
+    // Seed A with an entry+atom under a_proj so the whole subtree moves.
+    let fed = await loadFederated();
+    fed.entries.push({ id: 'a_e1', container_id: 'a_proj', kind: 'meeting', _circle: 'A', updated_at: '2026-06-02T00:00:00Z' });
+    fed.atoms.push({ id: 'a_at1', entry_id: 'a_e1', kind: 'action', body: 'do', _circle: 'A', updated_at: '2026-06-02T00:00:00Z' });
+    await saveFederated(fed);
+
+    // Move a_proj's subtree to circle B (what moveContainerToCircle does: retag).
+    fed = await loadFederated();
+    for (const o of [...fed.containers, ...fed.entries, ...fed.atoms]) {
+      if (o.id === 'a_proj' || o.container_id === 'a_proj' || o.entry_id === 'a_e1') o._circle = 'B';
+    }
+    await saveFederated(fed);
+
+    const a = JSON.parse(await readFile(pathA, 'utf8'));
+    const b = JSON.parse(await readFile(pathB, 'utf8'));
+    assert.ok(!a.containers.find(c => c.id === 'a_proj'), 'left circle A');
+    assert.ok(!a.entries.find(e => e.id === 'a_e1') && !a.atoms.find(x => x.id === 'a_at1'), 'subtree left A');
+    assert.ok(b.containers.find(c => c.id === 'a_proj'), 'arrived in circle B');
+    assert.ok(b.entries.find(e => e.id === 'a_e1') && b.atoms.find(x => x.id === 'a_at1'), 'subtree arrived in B');
+  });
+});
+
 test('an external concurrent edit to circle B is merged in, not clobbered', async () => {
   await withTwoCircles(async ({ pathB }) => {
     // First save establishes the snapshot baseline for both circles.

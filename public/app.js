@@ -175,6 +175,40 @@ function targetCircle() {
 function inActiveCircle(o) {
   return !ui.circle || ui.circle === 'all' || !o || !o._circle || o._circle === ui.circle;
 }
+function circleName(id) {
+  return (state.circles || []).find(c => c.id === id)?.name || 'this circle';
+}
+
+// Move a container's whole subtree (the container + its entries + their atoms)
+// to another circle. Re-tagging `_circle` is all it takes — on save, the
+// federation removes them from the source file and adds them to the target
+// (id-keyed, no broken links). The folder binding clears (it's relative to the
+// OLD circle's root; the physical files don't move — the lens is read-only), and
+// program membership clears (cross-circle programs are deferred).
+function moveContainerToCircle(c, targetId) {
+  if (!targetId || targetId === c._circle) return;
+  const targetName = circleName(targetId);
+  const ents = state.entries.filter(e => e.container_id === c.id);
+  const entIds = new Set(ents.map(e => e.id));
+  const atomCount = state.atoms.filter(a => entIds.has(a.entry_id)).length;
+  const extras = [];
+  if (c.folder) extras.push('its folder binding will be cleared (the files stay where they are)');
+  if (c.program_id) extras.push('it will leave its program');
+  const detail = `${ents.length} ${ents.length === 1 ? 'entry' : 'entries'}, ${atomCount} atom${atomCount === 1 ? '' : 's'}`;
+  if (!confirm(`Move “${c.title}” (+ ${detail}) to “${targetName}”?${extras.length ? '\n\n• ' + extras.join('\n• ') : ''}`)) return;
+
+  c._circle = targetId;
+  c.updated_at = nowIso();
+  if (c.folder != null) c.folder = null;
+  if (c.program_id) c.program_id = null;
+  for (const e of ents) e._circle = targetId;
+  for (const a of state.atoms) if (entIds.has(a.entry_id)) a._circle = targetId;
+
+  scheduleSave();
+  closeModal();
+  showToast(`Moved “${c.title}” to ${targetName}`);
+  if (location.hash.startsWith('#/c/')) location.hash = '#/'; else render();
+}
 // Before each save, ensure every object carries its origin circle: a new
 // top-level container → the active/target circle; entries inherit their
 // container's circle; atoms inherit their entry's container's circle. This is
@@ -4045,6 +4079,19 @@ function openEditContainerModal(c) {
       ${ragSelectHtml(c.rag || '')}
       <span class="field-hint">Leave on Auto to derive from open/overdue work, or set it by hand.</span>
     </label>
+    ${(state.circles || []).length > 1 && c.type !== 'program' ? `
+    <label class="field">
+      <span class="label">Circle</span>
+      <div class="circle-move-row">
+        <span class="muted small">In <strong>${escHtml(circleName(c._circle))}</strong></span>
+        <select id="m-move-circle">
+          <option value="">Move to another circle…</option>
+          ${(state.circles || []).filter(cl => cl.id !== c._circle).map(cl => `<option value="${escHtml(cl.id)}">${escHtml(cl.name)}</option>`).join('')}
+        </select>
+        <button class="btn ghost tiny" type="button" data-act="move-circle">Move →</button>
+      </div>
+      <span class="field-hint">Moves this ${typeLabel} + all its entries/actions into another circle's file. Its folder binding clears (files stay put)${c.program_id ? '; it leaves its program' : ''}.</span>
+    </label>` : ''}
     ${projectFields}
     <div class="modal-actions">
       ${isProject ? `<button class="btn ghost" data-act="to-reference" title="Turn this into an ongoing reference file (keeps all entries)">→ Reference file</button>` : ''}
@@ -4066,6 +4113,10 @@ function openEditContainerModal(c) {
     modal.querySelector('[data-act="cancel"]').onclick = closeModal;
     modal.querySelector('[data-act="to-reference"]')?.addEventListener('click', () => convertProjectToReference(c));
     modal.querySelector('[data-act="to-project"]')?.addEventListener('click', () => convertReferenceToProject(c));
+    modal.querySelector('[data-act="move-circle"]')?.addEventListener('click', () => {
+      const target = modal.querySelector('#m-move-circle')?.value;
+      if (target) moveContainerToCircle(c, target);
+    });
     modal.querySelector('[data-act="archive"]').onclick = () => {
       c.status = c.status === 'archived' ? 'active' : 'archived';
       c.updated_at = nowIso();

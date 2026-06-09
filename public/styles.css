@@ -1705,6 +1705,8 @@ main.main-ws { padding: 0; }
 .ws-circle-menu button:hover { background: var(--rail); }
 .ws-circle-menu button.on { color: var(--thread); font-weight: 700; }
 .ws-circle-you { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #fff; background: var(--teal); padding: 1px 6px; border-radius: 999px; }
+.circle-move-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.circle-move-row select { flex: 1; min-width: 150px; }
 
 /* Split: left list + right detail, each its own scroll region. */
 .ws-split { flex: 1 1 auto; display: flex; min-height: 0; }
