@@ -186,6 +186,11 @@ export default {
     if (url.pathname === '/api/dethreader') {
       return json({ error: 'Dethreader runs on the local Windows install (it drives Outlook), not the cloud demo.' }, { status: 501 });
     }
+    // Loop (Deloop) intake renders .loop files via Microsoft Graph + a local
+    // token cache — local-Node only. Same 501 pattern as /api/fs/*.
+    if (url.pathname.startsWith('/api/loop/')) {
+      return json({ error: 'Loop import runs on the local (Node) backend with a Microsoft sign-in, not the cloud demo.' }, { status: 501 });
+    }
     // Async jobs + consult sessions (T16/T26) are machine-local Node features —
     // the front-end probes /api/jobs and falls back to the synchronous
     // /api/atomize + /api/consult paths when it sees this 501.

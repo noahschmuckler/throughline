@@ -665,6 +665,7 @@ function wireAddMenu() {
     'import-file': () => openFileImport(),
     'paste-copilot': () => openCopilotImport(),
     'dethreader': () => runDethreader(),
+    'loop': () => runLoop(),
   };
   btn.onclick = (e) => {
     e.stopPropagation();
@@ -2596,6 +2597,187 @@ function showToast(message, sticky = false) {
   requestAnimationFrame(() => el.classList.add('show'));
   if (!sticky) setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, 3200);
   return el;
+}
+
+// ---- Loop (Deloop) intake — pull a Microsoft Loop note via Graph -----------
+// "🔁 Loop" → list the user's .loop files (rendered by Graph), pick one, convert
+// to Markdown, drop into an Inbox entry. If listing fails on auth, the
+// device-code sign-in wizard walks the user through the Microsoft authorization.
+
+async function runLoop() {
+  const busy = showToast('🔁 Looking for your Loop files in OneDrive…', true);
+  let data, status;
+  try {
+    const r = await fetch('/api/loop/list');
+    status = r.status;
+    data = await r.json().catch(() => ({}));
+  } catch (e) {
+    busy.remove();
+    alert('Loop: ' + (e.message || e));
+    return;
+  }
+  busy.remove();
+  if (status === 401 || data?.error === 'not_authed') {
+    // Auth restriction → run the sign-in wizard, then retry the whole flow.
+    openLoopWizard(runLoop);
+    return;
+  }
+  if (status !== 200) { alert('Loop: ' + (data?.error || `couldn't list Loop files (HTTP ${status}).`)); return; }
+  openLoopPicker(data.loops || []);
+}
+
+function openLoopPicker(loops) {
+  const rows = loops.length
+    ? loops.map((l, i) => `
+        <button class="loop-row" data-loop-idx="${i}">
+          <div class="loop-row-main">
+            <div class="loop-row-name">${escHtml(l.name.replace(/\.loop$/i, ''))}</div>
+            <div class="loop-row-meta">${escHtml(loopPathLabel(l.path))}${l.modified ? ' · ' + fmtDate(l.modified) : ''}</div>
+          </div>
+          <span class="loop-row-go">Import →</span>
+        </button>`).join('')
+    : `<div class="empty muted small" style="padding:14px 2px;">No .loop files found in your OneDrive.</div>`;
+  openModal(`
+    <div class="modal-head"><h2>Import a Loop note</h2><button class="modal-x" data-loop-close>✕</button></div>
+    <p class="muted small" style="margin:0 0 10px;">Pick a Microsoft Loop meeting note. Throughline converts it to text and opens it as a new entry, one click from Atomize.</p>
+    <div class="loop-list">${rows}</div>
+  `, (modal) => {
+    modal.querySelector('[data-loop-close]')?.addEventListener('click', closeModal);
+    modal.querySelectorAll('[data-loop-idx]').forEach(btn => {
+      btn.onclick = () => importLoop(loops[+btn.dataset.loopIdx]);
+    });
+  });
+}
+
+function loopPathLabel(path) {
+  if (!path) return 'OneDrive';
+  // Graph path like "/drive/root:/Folder/Sub" → "Folder/Sub".
+  const m = String(path).match(/root:?(.*)$/);
+  const tail = (m ? m[1] : path).replace(/^\//, '');
+  return tail || 'OneDrive';
+}
+
+async function importLoop(loop) {
+  if (!loop) return;
+  closeModal();
+  const busy = showToast(`🔁 Converting “${loop.name.replace(/\.loop$/i, '')}”…`, true);
+  try {
+    const r = await fetch('/api/loop/intake', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ driveId: loop.driveId, itemId: loop.id, name: loop.name }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401 || data?.error === 'not_authed') { busy.remove(); openLoopWizard(() => importLoop(loop)); return; }
+    if (!r.ok) throw new Error(data.error || `Import failed (HTTP ${r.status}).`);
+    const md = String(data.markdown || '');
+    if (!md.trim()) throw new Error('The conversion produced no text.');
+    importText(md, { title: (data.name || loop.name).replace(/\.loop$/i, ''), kind: 'meeting' });
+  } catch (e) {
+    alert('Loop: ' + (e.message || e));
+  } finally {
+    busy.remove();
+  }
+}
+
+// The device-code sign-in wizard (ported from loop_de_loop). Surfaces when a
+// Loop action hits an auth restriction; on success it runs `afterSuccess`
+// (re-list / re-import). SSE-driven: welcome → code → success / error.
+function openLoopWizard(afterSuccess) {
+  openModal(`
+    <div class="modal-head"><h2>Connect OneDrive</h2><button class="modal-x" data-loop-close>✕</button></div>
+    <div class="loop-wiz">
+      <div class="loop-wiz-step" data-wstep="welcome">
+        <p>Importing Loop notes needs a one-time Microsoft sign-in. Throughline only <strong>reads</strong> your Loop files — nothing is uploaded.</p>
+        <p class="muted small">It reuses Microsoft's standard Graph sign-in (device code), so no install is needed.</p>
+        <button class="btn primary" data-wiz-start>Sign in to OneDrive →</button>
+      </div>
+      <div class="loop-wiz-step" data-wstep="code" hidden>
+        <p>Open Microsoft's sign-in page and enter this code:</p>
+        <div class="loop-code-box"><span class="loop-code" data-wiz-code>…</span><button class="btn tiny" data-wiz-copy>Copy</button></div>
+        <button class="btn primary" data-wiz-open hidden>Open Microsoft sign-in ↗</button>
+        <p class="loop-wiz-status"><span class="loop-spinner"></span> <span data-wiz-status>Requesting code…</span> <span class="muted small" data-wiz-expiry></span></p>
+        <details class="loop-wiz-help">
+          <summary>What if I see “Approval Required”?</summary>
+          <p class="small">Microsoft may show an <b>Approval Required</b> page if your IT admin hasn't allowed this app for your account yet.</p>
+          <ol class="small"><li>Click <b>Request Access</b> on Microsoft's page.</li><li>Your admin gets a notification.</li><li>Come back and click <b>Try again</b> once they approve (usually within a business day).</li></ol>
+        </details>
+      </div>
+      <div class="loop-wiz-step" data-wstep="success" hidden>
+        <p>✓ Connected as <b data-wiz-account>—</b>.</p>
+        <button class="btn primary" data-wiz-continue>Continue →</button>
+      </div>
+      <div class="loop-wiz-step" data-wstep="error" hidden>
+        <p class="loop-wiz-err" data-wiz-error>Sign-in didn't complete.</p>
+        <p class="small muted">Common causes: you closed the sign-in tab; you hit <b>Approval Required</b> (wait for your admin, then retry); or the network blocked the request.</p>
+        <button class="btn primary" data-wiz-retry>Try again</button>
+      </div>
+    </div>
+  `, (modal) => {
+    const step = (name) => modal.querySelectorAll('[data-wstep]').forEach(s => { s.hidden = s.dataset.wstep !== name; });
+    const $ = (sel) => modal.querySelector(sel);
+    let verificationUri = null;
+
+    modal.querySelector('[data-loop-close]').addEventListener('click', closeModal);
+    $('[data-wiz-start]').onclick = startWizard;
+    $('[data-wiz-retry]').onclick = startWizard;
+    $('[data-wiz-continue]').onclick = () => { closeModal(); afterSuccess?.(); };
+    $('[data-wiz-copy]').onclick = async () => {
+      const code = $('[data-wiz-code]').textContent;
+      try { await navigator.clipboard.writeText(code); $('[data-wiz-copy]').textContent = 'Copied ✓'; } catch {}
+    };
+    $('[data-wiz-open]').onclick = () => { if (verificationUri) window.open(verificationUri, '_blank', 'noopener'); };
+
+    async function startWizard() {
+      step('code');
+      $('[data-wiz-code]').textContent = '…';
+      $('[data-wiz-status]').textContent = 'Requesting code from Microsoft…';
+      $('[data-wiz-expiry]').textContent = '';
+      $('[data-wiz-open]').hidden = true;
+      verificationUri = null;
+      try {
+        const resp = await fetch('/api/loop/auth/start', { method: 'POST', headers: { 'Accept': 'text/event-stream' } });
+        if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let end;
+          while ((end = buf.indexOf('\n\n')) >= 0) {
+            const frame = buf.slice(0, end); buf = buf.slice(end + 2);
+            let event = 'message', data = '';
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('event: ')) event = line.slice(7);
+              else if (line.startsWith('data: ')) data += line.slice(6);
+            }
+            let parsed = null; try { parsed = data ? JSON.parse(data) : null; } catch {}
+            if (!parsed) continue;
+            if (event === 'code') {
+              $('[data-wiz-code]').textContent = parsed.userCode || '—';
+              verificationUri = parsed.verificationUri || null;
+              $('[data-wiz-open]').hidden = !verificationUri;
+              $('[data-wiz-status]').textContent = 'Waiting for sign-in…';
+              if (parsed.expiresAt) {
+                const min = Math.round((new Date(parsed.expiresAt).getTime() - Date.now()) / 60000);
+                $('[data-wiz-expiry]').textContent = `(code expires in ${min} min)`;
+              }
+            } else if (event === 'success') {
+              $('[data-wiz-account]').textContent = parsed.account?.name || parsed.account?.username || 'your account';
+              step('success');
+            } else if (event === 'error') {
+              $('[data-wiz-error]').textContent = parsed.message || 'Sign-in didn\'t complete.';
+              step('error');
+            }
+          }
+        }
+      } catch (err) {
+        $('[data-wiz-error]').textContent = err.message || String(err);
+        step('error');
+      }
+    }
+  });
 }
 
 function openEntryDrawer(containerId, entryId, scrollToAtomId = null) {

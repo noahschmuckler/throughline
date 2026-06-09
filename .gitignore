@@ -1,7 +1,7 @@
 node_modules/
-# wrangler's lockfile — pins only the dev-only Cloudflare toolchain (no runtime
-# deps ship; the Node server has none). Local-only, like node_modules/.
-package-lock.json
+# package-lock.json is now TRACKED: the Node server gained runtime deps
+# (@azure/msal-node + turndown for the Loop/Deloop Graph import), and the orange
+# bundle vendors a prod-only `npm install` — so the lock must be reproducible.
 .wrangler/
 .dev.vars
 .env

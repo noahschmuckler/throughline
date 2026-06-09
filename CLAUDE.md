@@ -378,8 +378,11 @@ the **same** API (`GET/PUT /api/state`, `POST /api/atomize`):
   lives in `deploy/`** (mirrors atom_sandbox): `bash deploy/bundle.sh` →
   `dist/throughline-<sha>.zip` + `install-throughline-<sha>.ps1.txt`; the
   installer registers a `ThroughlineServer` logon scheduled task that runs
-  `node --env-file=.env server.js` on **:8787**. No `node_modules` to vendor
-  (server has zero runtime deps). `deploy/README-orange.md` is the operator
+  `node --env-file=.env server.js` on **:8787**. **The server is NO LONGER
+  zero-dependency** (2026-06-09): the Loop/Deloop Graph import added
+  `@azure/msal-node` + `turndown`, so `deploy/bundle.sh` now **vendors a
+  prod-only `node_modules`** into the zip (staged install, ~17 MB) and
+  `package-lock.json` is tracked. `deploy/README-orange.md` is the operator
   guide — note the shared-OneDrive last-write-wins caveat (each dyad member
   runs their own local server, both pointing `THROUGHLINE_DB` at the same
   synced OneDrive `state.json`; attachments land in `…/attachments/` beside
@@ -881,9 +884,10 @@ handled, everything else is static assets).
   demo" / cloud deploy. That's doubly stale now — there is no cloud
   deploy at all (see Deployment model above); the live form is the local
   Node server. Cheap fix next time README is touched.
-- **package-lock.json**: not tracked. The Node server has zero runtime
-  deps so it doesn't matter today. If the team starts caring about
-  reproducible installs, add it.
+- **package-lock.json**: now **tracked** (2026-06-09). The Node server gained
+  runtime deps (`@azure/msal-node` + `turndown` for the Loop/Deloop import), so
+  the lock pins them for the reproducible prod-only `node_modules` that
+  `deploy/bundle.sh` vendors into the orange zip.
 - *(Removed: the old Cloudflare per-preview-branch KV isolation and
   non-prod-deploy-command gaps — both moot now that nothing deploys to
   Cloudflare.)*

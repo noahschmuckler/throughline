@@ -76,8 +76,10 @@ the bundle into `%USERPROFILE%\throughline\`. Steps are further down under
 ## Prerequisites (one-time, per machine)
 
 - **Node 20.6+** on PATH (`node --version`). 20.6+ is required for the
-  `--env-file` flag the scheduled task uses. No `npm install` is needed —
-  Throughline's server has zero runtime dependencies.
+  `--env-file` flag the scheduled task uses. No `npm install` is needed on
+  orange — the bundle **vendors** the server's two runtime deps
+  (`@azure/msal-node` + `turndown`, for the Loop/Deloop OneDrive import) as a
+  prod-only `node_modules` (~17 MB) inside the zip.
 - The OneDrive shared folder exists and is synced locally (e.g.
   `C:\Users\<you>\OneDrive - <org>\Throughline\`). Create an empty
   `Throughline\` folder there; the app creates `state.json` on first write.
@@ -91,8 +93,8 @@ bash deploy/bundle.sh
 
 Outputs in `dist/`:
 
-- `throughline-<sha>.zip` — source only (no `.env`, no `data/`, no node_modules,
-  no seed scripts; orange starts blank).
+- `throughline-<sha>.zip` — source + a vendored prod-only `node_modules` (no
+  `.env`, no `data/`, no seed scripts; orange starts blank).
 - `install-throughline-<sha>.ps1.txt` — the PowerShell installer (shipped as
   `.txt` because OneDrive blocks the `.ps1` MIME type).
 

@@ -14,6 +14,10 @@
   "engines": {
     "node": ">=20"
   },
+  "dependencies": {
+    "@azure/msal-node": "^2.16.0",
+    "turndown": "^7.2.0"
+  },
   "devDependencies": {
     "wrangler": "^4.0.0"
   }
