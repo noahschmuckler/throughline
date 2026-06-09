@@ -52,59 +52,37 @@
       <div class="chat-panel" id="chat-panel" role="dialog" aria-modal="true" aria-label="Consult chat"></div>
     </div>
 
-    <template id="tpl-home">
-      <section class="home">
-        <div class="hdr-main">
-          <div class="hdr-main-left">
-            <h1 class="hdr-title">Project dashboard</h1>
-            <div class="hdr-sub" id="home-sub"></div>
-            <div class="hdr-rag" id="home-rag"></div>
-          </div>
-          <div class="view-toggle" id="home-view-toggle" role="tablist">
-            <button class="vtbtn" data-view="projects">▦&nbsp; Projects</button>
-            <button class="vtbtn" data-view="people">People</button>
-          </div>
-        </div>
-        <div id="home-results"></div>
-        <div class="home-actionbar">
-          <button class="btn primary" data-act="new-project-guided">✦ New project</button>
-          <button class="btn" data-act="new-program">New program</button>
-          <button class="btn" data-act="new-reference-file">New reference file</button>
-          <span class="actionbar-sep" aria-hidden="true"></span>
-          <button class="btn" data-act="new-adhoc">✎ Ad-hoc note</button>
-          <button class="btn" data-act="import-file">⤓ Import .md…</button>
-          <button class="btn" data-act="paste-copilot">📋 Paste from Copilot</button>
-          <span class="actionbar-hint">…or drop a Markdown file anywhere here</span>
-        </div>
-        <div id="home-view-body"></div>
-      </section>
-    </template>
-
-    <template id="tpl-home-projects">
-      <div class="home-projects">
-        <div class="home-filters">
-          <input
-            type="search"
-            id="home-search"
-            placeholder="Search projects & actions…"
-            class="search-input"
-          />
-          <div class="tag-chips" id="home-tag-chips"></div>
-          <div class="action-filters" id="action-filters">
-            <span class="af-label">Open actions:</span>
-            <button type="button" class="tag-chip af-chip" data-afilter="overdue">Overdue</button>
-            <button type="button" class="tag-chip af-chip" data-afilter="dueSoon">Due ≤7d</button>
-            <button type="button" class="tag-chip af-chip" data-afilter="unqueued">Not queued</button>
+    <!-- Workspace shell (meridian-os medical-director layout): a slim tab strip
+         + ＋Add menu + Projects/People toggle, then a left card list (own scroll)
+         beside a right detail panel (own scroll). The project list is always
+         visible; a clicked card / the home tabs fill the right panel. -->
+    <template id="tpl-workspace">
+      <div class="workspace">
+        <div class="ws-bar">
+          <div class="ws-tabs" id="ws-tabs" role="tablist"></div>
+          <div class="ws-bar-right">
+            <div class="add-wrap">
+              <button class="btn primary add-btn" id="ws-add-btn" aria-haspopup="true">＋ Add ▾</button>
+              <div class="add-menu" id="ws-add-menu" role="menu" hidden>
+                <button data-act="new-project-guided" role="menuitem">✦ New project</button>
+                <button data-act="new-program" role="menuitem">New program</button>
+                <button data-act="new-reference-file" role="menuitem">New reference file</button>
+                <div class="add-sep" aria-hidden="true"></div>
+                <button data-act="new-adhoc" role="menuitem">✎ Ad-hoc note</button>
+                <button data-act="import-file" role="menuitem">⤓ Import .md…</button>
+                <button data-act="paste-copilot" role="menuitem">📋 Paste from Copilot</button>
+              </div>
+            </div>
+            <div class="view-toggle" id="home-view-toggle" role="tablist">
+              <button class="vtbtn" data-view="projects">▦&nbsp; Projects</button>
+              <button class="vtbtn" data-view="people">People</button>
+            </div>
           </div>
         </div>
-        <div id="action-results"></div>
-        <div id="next-actions"></div>
-        <div class="shelf-bar" id="shelf-bar"></div>
-        <div class="tile-grid" id="project-grid"></div>
-        <h2 class="section-rule">Inbox &amp; reference files</h2>
-        <div class="container-list" id="container-list"></div>
-        <h2 class="section-rule">Recent activity</h2>
-        <div class="recent-list" id="recent-list"></div>
+        <div class="ws-split">
+          <aside class="ws-left" id="ws-left"></aside>
+          <section class="ws-right" id="ws-right"></section>
+        </div>
       </div>
     </template>
 

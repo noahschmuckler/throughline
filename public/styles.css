@@ -52,7 +52,7 @@
   /* Geometry */
   --radius:       6px;
   --radius-sm:    4px;
-  --maxw:         1180px;
+  --maxw:         1440px;
   --rail-w:       320px;
   --gap:          24px;
 
@@ -1604,7 +1604,7 @@ main { padding-top: 0; }
 }
 .hdr-meta { font-size: 0.72rem; color: var(--on-navy-mute); }
 .hdr-top-right { display: inline-flex; align-items: center; gap: 12px; }
-.hdr-settings { background: none; border: none; color: var(--on-navy-mute); font-size: 0.95rem; line-height: 1; cursor: pointer; padding: 2px 4px; }
+.hdr-settings { background: none; border: none; color: var(--on-navy-mute); font-size: 1.9rem; line-height: 1; cursor: pointer; padding: 0 4px; }
 .hdr-settings:hover { color: #fff; }
 .hdr-top .topbar-status { color: var(--on-navy-mute); }
 .hdr-top .topbar-status[data-state="saving"] { color: #7fd4e0; }
@@ -1668,10 +1668,110 @@ h1, h2, h3, h4, .hdr-title, .panel-title, .tile-title, .kpi-value, .pd-name, .t-
 .actionbar-sep { width: 1px; height: 22px; background: var(--paper-edge); margin: 0 4px; }
 .actionbar-hint { font-size: 0.75rem; color: var(--mute); margin-left: 2px; }
 .home.drag-over { outline: 2px dashed var(--teal); outline-offset: -10px; border-radius: 10px; }
-.home.drag-over::after {
+.home.drag-over::after, .workspace.drag-over::after {
   content: "Drop to import as a new Inbox entry";
   position: fixed; inset: 0; z-index: 40;
   display: flex; align-items: center; justify-content: center;
   background: rgba(26,39,68,0.55); color: #fff;
   font-family: var(--display); font-size: 1.4rem; pointer-events: none;
+}
+.workspace.drag-over { outline: 2px dashed var(--teal); outline-offset: -10px; }
+
+/* ================================================================== */
+/* Workspace shell — 3-panel: tab strip + left card list + right detail */
+/* Borrows the meridian-os medical-director layout (left list / right    */
+/* detail, teal active-tab underline, left-border card selection).       */
+/* ================================================================== */
+
+main.main-ws { padding: 0; }
+.workspace { height: calc(100vh - 48px); display: flex; flex-direction: column; min-height: 0; }
+
+/* Top bar: home tabs (left) + ＋Add menu and Projects/People toggle (right). */
+.ws-bar { display: flex; align-items: stretch; justify-content: space-between; gap: 12px; padding: 0 16px; background: var(--card); border-bottom: 1px solid var(--card-edge); flex: 0 0 auto; }
+.ws-tabs { display: flex; gap: 2px; }
+.ws-tab { font-family: var(--sans); font-size: 0.86rem; font-weight: 600; color: var(--mute); background: none; border: none; border-bottom: 3px solid transparent; padding: 13px 16px 11px; cursor: pointer; white-space: nowrap; }
+.ws-tab:hover { color: var(--ink); }
+.ws-tab.active { color: var(--ink); border-bottom-color: var(--teal); }
+.ws-tab-badge { font-size: 0.64rem; font-weight: 700; color: #fff; background: var(--a-tone); border-radius: 10px; padding: 0 6px; vertical-align: 1px; }
+.ws-bar-right { display: flex; align-items: center; gap: 10px; }
+
+/* Split: left list + right detail, each its own scroll region. */
+.ws-split { flex: 1 1 auto; display: flex; min-height: 0; }
+.ws-left { flex: 0 0 34%; min-width: 320px; max-width: 384px; overflow-y: auto; border-right: 1px solid var(--card-edge); background: var(--rail); padding: 12px 12px 48px; }
+.ws-right { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 22px 28px 64px; }
+
+/* Left head + card list */
+.ws-left-head { margin-bottom: 8px; }
+.ws-search { width: 100%; background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 8px 12px; font: inherit; font-size: 0.85rem; color: var(--ink); }
+.ws-search:focus { outline: none; border-color: var(--thread-soft); }
+.ws-cardlist { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+.ws-divider { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase; color: var(--mute); margin: 18px 4px 2px; }
+.ws-empty { padding: 10px 4px; }
+
+/* Left cards — compact meridian-style list rows */
+.ws-card { position: relative; display: flex; background: var(--card); border: 1px solid var(--card-edge); border-radius: 9px; cursor: pointer; overflow: hidden; transition: border-color 120ms var(--ease), box-shadow 120ms var(--ease); }
+.ws-card:hover { border-color: var(--thread-soft); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.ws-card.selected { border-color: var(--teal); box-shadow: inset 3px 0 0 var(--teal); background: rgba(0,120,138,0.05); }
+.ws-card-accent { width: 4px; flex: 0 0 4px; }
+.ws-card.selected .ws-card-accent { visibility: hidden; }
+.ws-card-main { flex: 1; min-width: 0; padding: 9px 12px 10px; }
+.ws-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ws-card-kind { font-size: 0.55rem; font-weight: 700; letter-spacing: 0.1em; color: var(--mute); }
+.ws-prog .ws-card-kind { color: var(--navy); }
+.ws-ref .ws-card-kind  { color: var(--d-tone); }
+.ws-card .rag-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.ws-card-title { font-family: var(--display); font-size: 1rem; line-height: 1.2; color: var(--ink); margin: 2px 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-card-meta { font-size: 0.74rem; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-card-prog { height: 3px; background: var(--paper-edge); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.ws-card-prog > span { display: block; height: 100%; background: var(--thread-soft); border-radius: 2px; }
+
+/* ＋Add dropdown menu */
+.add-wrap { position: relative; display: flex; align-items: center; }
+.add-btn { white-space: nowrap; }
+.add-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; background: var(--card); border: 1px solid var(--card-edge); border-radius: 9px; box-shadow: 0 12px 32px rgba(0,0,0,0.16); padding: 6px; display: flex; flex-direction: column; min-width: 210px; }
+.add-menu[hidden] { display: none; }
+.add-menu button { text-align: left; background: none; border: none; padding: 8px 12px; border-radius: 6px; font: inherit; font-size: 0.85rem; color: var(--ink); cursor: pointer; }
+.add-menu button:hover { background: var(--rail); color: var(--thread); }
+.add-sep { height: 1px; background: var(--card-edge); margin: 5px 6px; }
+
+/* Right-panel home views */
+.ws-pane { max-width: 900px; }
+.ws-pane-title { font-family: var(--display); font-size: 1.5rem; color: var(--ink); margin: 0 0 12px; }
+.ws-pane .section-rule { margin-top: 22px; padding-top: 14px; }
+.ws-pane #action-results .section-rule, .ws-pane #next-actions .section-rule:first-child { margin-top: 18px; }
+.ws-dash .hdr-sub { color: var(--mute); margin-bottom: 8px; }
+.ws-dash .hdr-warn { color: var(--overdue); }
+.ws-dash .hdr-rag { margin: 0 0 16px; }
+.ws-dash .hdr-rag .rag-count { color: var(--ink-soft); }
+.ws-dash #home-results:empty { display: none; }
+
+/* People view inside the shell — roster fills the left panel, detail the right. */
+.ws-left .ps-hdr { padding: 8px 6px 12px; }
+.ws-left .person-row { border-radius: 8px; }
+.ws-right .person-detail { border: 1px solid var(--card-edge); border-radius: 10px; background: var(--card); }
+
+/* Container detail inside the right panel — neutralize the full-column negative
+   margins so the navy panel header sits inside the panel as a contained band. */
+.ws-right .project { }
+.ws-right .panel-hdr { margin: 0; padding: 12px 16px; border-radius: 9px; }
+.ws-right .project-subhead { padding: 14px 2px 4px; }
+.ws-right #project-tabbody { padding-bottom: 8px; }
+
+/* ---- T34 organize-tool fixes (folded into the redesign) ---- */
+/* Bigger shelf drop-target cards + a stronger drop-alignment cue. */
+.shelf-tab.organizing { display: inline-flex; min-height: 56px; min-width: 104px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; padding: 10px 12px; border-style: dashed; border-radius: 10px; }
+.shelf-tab.organizing.active { border-style: solid; }
+.shelf-tab.tab-drop { background: var(--teal); border-color: var(--teal); border-style: solid; color: #fff; box-shadow: 0 0 0 3px rgba(0,120,138,0.35); }
+.shelf-tab.tab-drop .shelf-count { opacity: 1; color: #fff; }
+.ws-card.organizing { cursor: grab; outline: 1px dashed var(--card-edge); outline-offset: 2px; }
+.ws-card.organizing:hover { box-shadow: none; }
+.ws-card.dragging { opacity: 0.45; }
+.ws-card.tile-dropbefore { box-shadow: 0 -3px 0 0 var(--teal), 0 2px 8px rgba(0,0,0,0.12); }
+/* Organize button 2× (overrides .btn.tiny). */
+.btn.tiny.shelf-organize { font-size: 1.4rem; padding: 6px 16px; line-height: 1; }
+.btn.tiny.shelf-organize.on { color: var(--thread); border-color: var(--thread); font-weight: 600; }
+
+@media (max-width: 880px) {
+  .ws-left { flex-basis: 44%; min-width: 260px; }
+  .ws-right { padding: 16px 16px 48px; }
 }

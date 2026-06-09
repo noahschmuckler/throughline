@@ -21,7 +21,9 @@ let currentDrawerEntryId = null;
 const homeFilters = { search: '', activeTags: new Set(), actionFilters: { overdue: false, dueSoon: false, unqueued: false } };
 
 // Dashboard view state (home toggle + per-person/per-project tab selections).
-const ui = { homeView: 'projects', personId: null, personTab: 'actions', projectTab: 'overview', shelf: null, organize: false };
+// homeTab = the right-panel home view (dashboard | next | activity); selectedCard
+// = the container shown in the right panel while the left list stays visible.
+const ui = { homeView: 'projects', homeTab: 'dashboard', selectedCard: null, personId: null, personTab: 'actions', projectTab: 'overview', shelf: null, organize: false };
 
 // ---------- State + persistence ------------------------------------
 
@@ -579,70 +581,292 @@ window.addEventListener('hashchange', () => { closeDrawer(true); render(); });
 
 function render() {
   const main = document.getElementById('main');
-  main.innerHTML = '';
   const r = currentRoute();
-  if (r.kind !== 'home') stopPoll('results'); // dashboard-only poll (T16)
+  if (r.kind !== 'home' && r.kind !== 'container') stopPoll('results'); // dashboard-only poll (T16)
   if (r.kind === 'setup') {
+    main.className = '';
+    main.innerHTML = '';
     renderSetup(main);
-  } else if (r.kind === 'home') {
-    if (r.view) ui.homeView = r.view;
-    renderHome(main);
-  } else if (r.kind === 'container') {
+    return;
+  }
+  if (r.kind === 'container') {
     const c = getContainer(r.id);
     if (!c) {
+      main.className = '';
       main.innerHTML = `<div class="empty">No project with id <code>${escHtml(r.id)}</code>. <a href="#/">Back home</a>.</div>`;
-    } else {
-      renderContainer(main, c);
+      return;
     }
+    renderWorkspace(main, r);
+    return;
   }
+  // home (projects | people)
+  if (r.view) ui.homeView = r.view;
+  renderWorkspace(main, r);
 }
 
 // ---------- Home view ----------------------------------------------
 
-function renderHome(main) {
-  main.appendChild(tmpl('tpl-home'));
+// The persistent workspace shell (meridian-os medical-director layout): a slim
+// tab strip + ＋Add menu + Projects/People toggle on top, then a left card list
+// (own scroll) beside a right detail panel (own scroll). Both the home routes
+// and a selected container render into this same shell so the project list is
+// ALWAYS visible.
+let wsLeftScroll = 0;
 
-  // T16: keep the Results strip live while the dashboard is mounted; render()
+function renderWorkspace(main, r) {
+  const prevLeft = document.getElementById('ws-left');
+  if (prevLeft) wsLeftScroll = prevLeft.scrollTop;   // preserve list scroll across re-renders
+
+  main.className = 'main-ws';
+  main.innerHTML = '';
+  main.appendChild(tmpl('tpl-workspace'));
+
+  wireAddMenu();
+  wireViewToggle();
+  wireFileDrop();
+  renderWsTabs(r);
+
+  // A selected container always shows the project card list on the left (so the
+  // selection is in context); only the bare People route swaps the left to people.
+  const peopleMode = ui.homeView === 'people' && r.kind !== 'container';
+
+  if (peopleMode) renderPeopleLeft();
+  else renderCardList();
+
+  if (r.kind === 'container') {
+    const c = getContainer(r.id);
+    ui.selectedCard = r.id;
+    renderContainer(document.getElementById('ws-right'), c);
+  } else {
+    ui.selectedCard = null;
+    if (peopleMode) renderPeopleRight();
+    else renderRightHome();
+  }
+
+  const left = document.getElementById('ws-left');
+  if (left) left.scrollTop = wsLeftScroll;
+
+  // T16: keep the Results strip live only on the home dashboard tab; render()
   // stops this on route change (one registry — no stray intervals).
-  if (JOBS_ENABLED) startPoll('results', renderResults, 5000);
+  if (JOBS_ENABLED && r.kind === 'home' && !peopleMode) startPoll('results', renderResults, 5000);
+}
 
-  main.querySelector('[data-act="new-project-guided"]').onclick =
-    () => openProjectWizard();
-  main.querySelector('[data-act="new-program"]').onclick =
-    () => openNewProgramModal();
-  main.querySelector('[data-act="new-reference-file"]').onclick =
-    () => openNewContainerModal('reference_file');
-  main.querySelector('[data-act="new-adhoc"]').onclick =
-    () => openAdHocEntryDrawer();
-  main.querySelector('[data-act="import-file"]').onclick =
-    () => openFileImport();
-  main.querySelector('[data-act="paste-copilot"]').onclick =
-    () => openCopilotImport();
+// The ＋Add menu consolidates the six capture/create actions (saves the real
+// estate the old stacked action bar ate). Handlers are the originals.
+function wireAddMenu() {
+  const btn = document.getElementById('ws-add-btn');
+  const menu = document.getElementById('ws-add-menu');
+  if (!btn || !menu) return;
+  const acts = {
+    'new-project-guided': () => openProjectWizard(),
+    'new-program': () => openNewProgramModal(),
+    'new-reference-file': () => openNewContainerModal('reference_file'),
+    'new-adhoc': () => openAdHocEntryDrawer(),
+    'import-file': () => openFileImport(),
+    'paste-copilot': () => openCopilotImport(),
+  };
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    if (willOpen) {
+      const close = (ev) => {
+        if (!menu.contains(ev.target) && ev.target !== btn) { menu.hidden = true; document.removeEventListener('click', close); }
+      };
+      setTimeout(() => document.addEventListener('click', close), 0);
+    }
+  };
+  menu.querySelectorAll('[data-act]').forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); menu.hidden = true; acts[b.dataset.act]?.(); };
+  });
+}
 
-  // Drag-and-drop a Markdown/text file anywhere on the dashboard → ingest it.
-  const section = main.querySelector('.home');
-  section.addEventListener('dragover', (ev) => {
-    if (!ev.dataTransfer?.types?.includes('Files')) return;
+// Drag-and-drop a Markdown/text file anywhere on the workspace → ingest it.
+function wireFileDrop() {
+  const zone = document.querySelector('.workspace');
+  if (!zone) return;
+  zone.addEventListener('dragover', (ev) => {
+    if (!ev.dataTransfer?.types?.includes('Files')) return;   // ignore tile drags (text/plain)
     ev.preventDefault();
-    section.classList.add('drag-over');
+    zone.classList.add('drag-over');
   });
-  section.addEventListener('dragleave', (ev) => {
-    if (ev.target === section) section.classList.remove('drag-over');
-  });
-  section.addEventListener('drop', (ev) => {
+  zone.addEventListener('dragleave', (ev) => { if (ev.target === zone) zone.classList.remove('drag-over'); });
+  zone.addEventListener('drop', (ev) => {
     if (!ev.dataTransfer?.files?.length) return;
     ev.preventDefault();
-    section.classList.remove('drag-over');
+    zone.classList.remove('drag-over');
     const f = [...ev.dataTransfer.files].find(
       f => /\.(md|markdown|txt|text)$/i.test(f.name) || /^text\//.test(f.type)
     );
     if (f) importTextFile(f);
     else alert('Drop a Markdown or text file (.md / .txt).');
   });
+}
 
-  renderHomeSub();
-  wireViewToggle();
-  renderHomeView();
+const WS_TABS = [
+  { k: 'dashboard', l: 'Dashboard' },
+  { k: 'next', l: 'Next actions' },
+  { k: 'activity', l: 'Activity' },
+];
+
+function renderWsTabs(r) {
+  const host = document.getElementById('ws-tabs');
+  if (!host) return;
+  const peopleMode = ui.homeView === 'people' && r.kind !== 'container';
+  if (peopleMode) { host.innerHTML = ''; return; }
+  const onContainer = r.kind === 'container';      // a project is open → no home tab is "active"
+  const qn = queuedOpenActions().length;
+  host.innerHTML = WS_TABS.map(t => {
+    const active = !onContainer && ui.homeTab === t.k;
+    const badge = (t.k === 'next' && qn) ? ` <span class="ws-tab-badge">${qn}</span>` : '';
+    return `<button class="ws-tab${active ? ' active' : ''}" data-wstab="${t.k}">${t.l}${badge}</button>`;
+  }).join('');
+  host.querySelectorAll('[data-wstab]').forEach(btn => {
+    btn.onclick = () => {
+      ui.homeTab = btn.dataset.wstab;
+      if (location.hash.startsWith('#/c/')) location.hash = '#/';   // leave the open project
+      else { renderWsTabs(currentRoute()); renderRightHome(); }
+    };
+  });
+}
+
+// The right-panel home views (projects mode). Reuses the existing section
+// renderers — only their host ids move inside #ws-right.
+function renderRightHome() {
+  const right = document.getElementById('ws-right');
+  if (!right) return;
+  if (ui.homeTab === 'next') {
+    right.innerHTML = `
+      <div class="ws-pane">
+        <h1 class="ws-pane-title">Next actions</h1>
+        <div class="action-filters" id="action-filters">
+          <span class="af-label">Open actions:</span>
+          <button type="button" class="tag-chip af-chip" data-afilter="overdue">Overdue</button>
+          <button type="button" class="tag-chip af-chip" data-afilter="dueSoon">Due ≤7d</button>
+          <button type="button" class="tag-chip af-chip" data-afilter="unqueued">Not queued</button>
+        </div>
+        <div id="action-results"></div>
+        <div id="next-actions"></div>
+      </div>`;
+    const af = document.getElementById('action-filters');
+    af.querySelectorAll('[data-afilter]').forEach(btn => {
+      btn.onclick = () => {
+        const k = btn.dataset.afilter;
+        homeFilters.actionFilters[k] = !homeFilters.actionFilters[k];
+        renderActionResults();
+      };
+    });
+    renderActionResults();
+    renderNextActions();
+  } else if (ui.homeTab === 'activity') {
+    right.innerHTML = `<div class="ws-pane"><h1 class="ws-pane-title">Recent activity</h1><div class="recent-list" id="recent-list"></div></div>`;
+    renderRecent();
+  } else {
+    right.innerHTML = `
+      <div class="ws-pane ws-dash">
+        <h1 class="ws-pane-title">Dashboard</h1>
+        <div class="hdr-sub" id="home-sub"></div>
+        <div class="hdr-rag" id="home-rag"></div>
+        <div id="home-results"></div>
+        <div id="action-results"></div>
+      </div>`;
+    renderHomeSub();
+    if (JOBS_ENABLED) renderResults();
+    renderActionResults();   // shows the ⚡ matching-actions surface while searching
+  }
+}
+
+// Re-render the home panels after a drawer edit (replaces the old inline
+// renderHomeBody/renderRecent calls in closeDrawer).
+function refreshHomeAfterEdit() {
+  if (ui.homeView === 'people') { renderPeopleLeft(); renderPeopleRight(); }
+  else { renderProjectGrid(); renderRightHome(); }
+}
+
+// ---------- Left card list (programs · projects · inbox · references) ------
+
+function renderCardList() {
+  const left = document.getElementById('ws-left');
+  if (!left) return;
+  left.innerHTML = `
+    <div class="ws-left-head">
+      <input type="search" id="ws-search" class="ws-search" placeholder="Search projects & actions…" />
+    </div>
+    <div class="shelf-bar" id="shelf-bar"></div>
+    <div class="ws-cardlist" id="ws-cardlist"></div>`;
+  const search = document.getElementById('ws-search');
+  search.value = homeFilters.search;
+  search.oninput = () => {
+    homeFilters.search = search.value.toLowerCase();
+    renderProjectGrid();
+    renderActionResults();   // search spans actions too (T36)
+  };
+  renderShelfBar();
+  renderProjectGrid();
+}
+
+function wsDivider(label) {
+  const d = document.createElement('div');
+  d.className = 'ws-divider';
+  d.textContent = label;
+  return d;
+}
+
+function renderWsCard(c) {
+  const card = document.createElement('div');
+  const isProg = c.type === 'program';
+  const isRef = c.type === 'reference_file';
+  card.className = 'ws-card' + (isProg ? ' ws-prog' : '') + (isRef ? ' ws-ref' : '') + (c.id === ui.selectedCard ? ' selected' : '');
+  card.onclick = () => { location.hash = `#/c/${encodeURIComponent(c.id)}`; };
+  const rag = ragOf(c);
+  let open = 0, meta, accent;
+  if (isProg) {
+    const kids = childProjectsOf(c.id).filter(k => k.type !== 'program');
+    open = kids.reduce((n, k) => n + openActionsOf(k.id).length, 0);
+    accent = 'var(--navy)';
+    meta = `${kids.length} project${kids.length === 1 ? '' : 's'}${open ? ` · ${open} open` : ''}`;
+  } else {
+    const oa = openActionsOf(c.id);
+    open = oa.length;
+    const overdue = oa.filter(isOverdue).length;
+    accent = isRef ? 'var(--d-tone)' : projectColor(c);
+    if (isRef) meta = open ? `${open} open` : 'reference';
+    else meta = `${open ? `${open} open${overdue ? ` · ${overdue} overdue` : ''}` : '✓ clear'}${c.next_meeting ? ` · next ${fmtDate(c.next_meeting)}` : ''}`;
+  }
+  const pct = c.type === 'project' ? completionOf(c) : null;
+  card.innerHTML = `
+    <span class="ws-card-accent" style="background:${accent}"></span>
+    <div class="ws-card-main">
+      <div class="ws-card-top">
+        <span class="ws-card-kind">${isProg ? 'PROGRAM' : isRef ? 'REFERENCE' : 'PROJECT'}</span>
+        <span class="rag-dot" style="background:${RAG_COLOR[rag]}" title="${RAG_LABEL[rag]}"></span>
+      </div>
+      <div class="ws-card-title">${escHtml((c.emoji ? c.emoji + ' ' : '') + c.title)}</div>
+      <div class="ws-card-meta">${escHtml(meta)}</div>
+      ${pct !== null ? `<div class="ws-card-prog"><span style="width:${pct}%"></span></div>` : ''}
+    </div>`;
+  return card;
+}
+
+function renderWsInboxCard() {
+  const card = document.createElement('div');
+  card.className = 'ws-card ws-inbox' + (ui.selectedCard === INBOX_ID ? ' selected' : '');
+  card.onclick = () => { getOrCreateInbox(); location.hash = `#/c/${INBOX_ID}`; };
+  const inbox = state.containers.find(c => c.id === INBOX_ID);
+  const count = inbox ? entriesOf(INBOX_ID).length : 0;
+  const open = openActionsOf(INBOX_ID);
+  const overdue = open.filter(isOverdue).length;
+  const meta = count
+    ? `${count} ${count === 1 ? 'entry' : 'entries'} waiting${open.length ? ` · ${open.length} open${overdue ? ` · ${overdue} overdue` : ''}` : ''}`
+    : 'Empty — capture via ＋ Add';
+  card.innerHTML = `
+    <span class="ws-card-accent" style="background:var(--mute-soft)"></span>
+    <div class="ws-card-main">
+      <div class="ws-card-top"><span class="ws-card-kind">INBOX</span></div>
+      <div class="ws-card-title">Inbox</div>
+      <div class="ws-card-meta">${escHtml(meta)}</div>
+    </div>`;
+  return card;
 }
 
 // The dark-header sub line: "N projects · X open · Y overdue · next <date>".
@@ -681,43 +905,6 @@ function wireViewToggle() {
     btn.classList.toggle('active', btn.dataset.view === ui.homeView);
     btn.onclick = () => { location.hash = btn.dataset.view === 'people' ? '#/people' : '#/'; };
   });
-}
-
-function renderHomeView() {
-  const body = document.getElementById('home-view-body');
-  if (!body) return;
-  body.innerHTML = '';
-  if (ui.homeView === 'people') { renderPeopleView(body); return; }
-  renderHomeProjects(body);
-}
-
-function renderHomeProjects(body) {
-  body.appendChild(tmpl('tpl-home-projects'));
-  const search = document.getElementById('home-search');
-  search.value = homeFilters.search;
-  search.oninput = () => {
-    homeFilters.search = search.value.toLowerCase();
-    renderActionResults();
-    renderProjectGrid();
-    renderHomeBody();
-  };
-  // T36: action-filter chips (overdue / due-soon / not-queued) drive the
-  // matching-actions search surface.
-  const af = document.getElementById('action-filters');
-  if (af) af.querySelectorAll('[data-afilter]').forEach(btn => {
-    btn.onclick = () => {
-      const k = btn.dataset.afilter;
-      homeFilters.actionFilters[k] = !homeFilters.actionFilters[k];
-      renderActionResults();
-    };
-  });
-  renderHomeTagChips();
-  renderActionResults();
-  renderNextActions();
-  renderShelfBar();
-  renderProjectGrid();
-  renderHomeBody();
-  renderRecent();
 }
 
 // T16: the Results strip — background ingestion runs land here. Open is
@@ -1024,7 +1211,7 @@ function renderShelfBar() {
     <div class="shelf-tabs">
       ${tabs.map(s => {
         const star = (s.id === shelves.landing && s.id !== ALL_SHELF) ? '★ ' : '';
-        return `<button class="shelf-tab${s.id === cur ? ' active' : ''}" data-shelf="${escHtml(s.id)}">${star}${escHtml(s.name)} <span class="shelf-count">${shelfCount(s.id)}</span></button>`;
+        return `<button class="shelf-tab${s.id === cur ? ' active' : ''}${ui.organize ? ' organizing' : ''}" data-shelf="${escHtml(s.id)}">${star}${escHtml(s.name)} <span class="shelf-count">${shelfCount(s.id)}</span></button>`;
       }).join('')}
     </div>
     <button class="btn tiny shelf-organize${ui.organize ? ' on' : ''}" data-shelf-organize>${ui.organize ? '✓ Done' : '⚙ Organize'}</button>
@@ -1043,7 +1230,8 @@ function renderShelfBar() {
       btn.addEventListener('dragleave', () => btn.classList.remove('tab-drop'));
       btn.addEventListener('drop', (e) => {
         e.preventDefault(); btn.classList.remove('tab-drop');
-        if (dragCid && id !== ALL_SHELF) { assignToShelf(dragCid, id); ui.shelf = id; renderShelfBar(); renderProjectGrid(); }
+        // Stay on the originating shelf after filing (don't jump to the recipient).
+        if (dragCid && id !== ALL_SHELF) { assignToShelf(dragCid, id); renderShelfBar(); renderProjectGrid(); }
       });
     }
   });
@@ -1084,12 +1272,16 @@ function decorateOrganizeTile(tile, c) {
   });
 }
 
+// Builds the whole left card list: the shelf-scoped programs + standalone
+// projects (draggable in Organize mode), then a divider, the pinned Inbox card,
+// and the reference files. (Named renderProjectGrid for continuity — the shelf
+// code calls it after every reorder / filing.)
 function renderProjectGrid() {
-  const grid = document.getElementById('project-grid');
+  const grid = document.getElementById('ws-cardlist');
   if (!grid) return;
   grid.innerHTML = '';
   // Search transcends shelves so a back-burnered project stays findable; without
-  // a query, the grid is the current shelf only.
+  // a query, the list is the current shelf only.
   const searching = !!homeFilters.search || homeFilters.activeTags.size > 0;
   let items;
   if (searching) {
@@ -1098,93 +1290,27 @@ function renderProjectGrid() {
   } else {
     items = tilesForShelf(currentShelf());
   }
-  if (!items.length) {
-    grid.innerHTML = searching
-      ? `<div class="empty muted tile-empty">No projects match.</div>`
-      : (topLevelTiles().length
-        ? `<div class="empty muted tile-empty">No projects on this view. Switch to <strong>All</strong>, or drag tiles here in <strong>⚙ Organize</strong>.</div>`
-        : `<div class="empty muted tile-empty">No projects yet. Click <strong>✦ New project</strong> to start one.</div>`);
-    return;
-  }
   for (const c of items) {
-    const tile = c.type === 'program' ? renderProgramTile(c) : renderProjectTile(c);
-    if (ui.organize && !searching) decorateOrganizeTile(tile, c);
-    grid.appendChild(tile);
+    const card = renderWsCard(c);
+    if (ui.organize && !searching) decorateOrganizeTile(card, c);
+    grid.appendChild(card);
   }
-}
-
-// A program shows as a distinct top-level tile (navy, "PROGRAM" badge, objective,
-// child count + aggregate RAG) that links through to its dashboard.
-function renderProgramTile(p) {
-  const tile = document.createElement('div');
-  tile.className = 'tile program-tile';
-  tile.onclick = () => { location.hash = `#/c/${encodeURIComponent(p.id)}`; };
-  const kids = childProjectsOf(p.id).filter(k => k.type !== 'program');
-  const open = kids.reduce((n, k) => n + openActionsOf(k.id).length, 0);
-  const rag = ragOf(p);
-  tile.innerHTML = `
-    <div class="tile-top">
-      <span class="prog-badge">PROGRAM</span>
-      <span class="rag-dot lg" style="background:${RAG_COLOR[rag]}" title="${rag}"></span>
-    </div>
-    <div class="tile-title">${escHtml(p.title)}</div>
-    <div class="tile-status">${escHtml(p.objective || '')}</div>
-    <div class="tile-bottom">
-      <span class="tile-cat">${kids.length} project${kids.length === 1 ? '' : 's'}</span>
-      <span class="tile-open ${open ? 'has' : ''}">${open ? open + ' open' : '✓ clear'}</span>
-    </div>
-  `;
-  return tile;
-}
-
-function renderProjectTile(c) {
-  const tile = document.createElement('div');
-  tile.className = 'tile';
-  tile.style.background = projectColor(c);
-  tile.onclick = () => { location.hash = `#/c/${encodeURIComponent(c.id)}`; };
-
-  const open = openActionsOf(c.id);
-  const overdue = open.filter(isOverdue).length;
-  const pct = completionOf(c);
-  const status = c.summary || c.goal_or_purpose || '';
-  const last = lastEntryDate(c.id);
-
-  tile.innerHTML = `
-    <div class="tile-top">
-      <span class="tile-emoji">${escHtml(c.emoji || '📁')}<span class="rag-dot tile-rag" style="background:${RAG_COLOR[ragOf(c)]}" title="${RAG_LABEL[ragOf(c)]}"></span></span>
-      <div class="tile-pct"><div class="tile-pct-num">${pct}%</div><div class="tile-pct-lbl">complete</div></div>
-    </div>
-    <div class="tile-title">${escHtml(c.title)}</div>
-    <div class="tile-status">${escHtml(status)}</div>
-    <div class="tile-bottom">
-      <span class="tile-cat">${escHtml(c.category || 'Project')}</span>
-      <span class="tile-open ${open.length ? 'has' : ''}">${open.length ? open.length + ' open' + (overdue ? ' · ' + overdue + ' overdue' : '') : '✓ clear'}</span>
-    </div>
-    <div class="tile-prog-wrap"><div class="tile-prog-fill" style="width:${pct}%"></div></div>
-    <div class="tile-dates">${c.next_meeting ? 'Next: ' + fmtDate(c.next_meeting) : 'No meeting scheduled'}${last ? ' · Last: ' + last : ''}</div>
-  `;
-  return tile;
-}
-
-function renderHomeTagChips() {
-  const wrap = document.getElementById('home-tag-chips');
-  if (!wrap) return;
-  wrap.innerHTML = '';
-  const tags = allTags();
-  if (!tags.length) return;
-  for (const t of tags) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'tag-chip' + (homeFilters.activeTags.has(t) ? ' active' : '');
-    chip.textContent = '#' + t;
-    chip.onclick = () => {
-      if (homeFilters.activeTags.has(t)) homeFilters.activeTags.delete(t);
-      else homeFilters.activeTags.add(t);
-      renderHomeTagChips();
-      renderHomeBody();
-    };
-    wrap.appendChild(chip);
+  if (!items.length) {
+    const e = document.createElement('div');
+    e.className = 'empty muted small ws-empty';
+    e.innerHTML = searching
+      ? 'No projects match.'
+      : (topLevelTiles().length
+        ? 'No projects on this view. Switch to <strong>All</strong>, or drag cards here in <strong>⚙ Organize</strong>.'
+        : 'No projects yet. Use <strong>＋ Add</strong> to start one.');
+    grid.appendChild(e);
   }
+  // Inbox + reference files — not shelf-scoped (always shown; filtered by search).
+  grid.appendChild(wsDivider('Inbox & references'));
+  grid.appendChild(renderWsInboxCard());
+  const refs = filterContainers('reference_file').sort((a, b) =>
+    (lastTouchedOf(b.id) || b.created_at || '').localeCompare(lastTouchedOf(a.id) || a.created_at || ''));
+  for (const ref of refs) grid.appendChild(renderWsCard(ref));
 }
 
 function filterContainers(type = null) {
@@ -1203,97 +1329,6 @@ function filterContainers(type = null) {
     }
     return true;
   });
-}
-
-// The secondary list under the project grid: pinned Inbox row + reference
-// files (projects live in the tile grid above).
-function renderHomeBody() {
-  const list = document.getElementById('container-list');
-  if (!list) return;
-  list.innerHTML = '';
-
-  list.appendChild(renderInboxRow());
-
-  const items = filterContainers('reference_file').sort((a, b) => {
-    const ta = lastTouchedOf(a.id) || a.created_at || '';
-    const tb = lastTouchedOf(b.id) || b.created_at || '';
-    return tb.localeCompare(ta);
-  });
-  for (const c of items) list.appendChild(renderContainerRow(c));
-}
-
-function renderInboxRow() {
-  const row = document.createElement('div');
-  row.className = 'container-row inbox-row';
-  row.onclick = () => {
-    getOrCreateInbox();
-    location.hash = `#/c/${INBOX_ID}`;
-  };
-
-  const inbox = state.containers.find(c => c.id === INBOX_ID);
-  if (!inbox || entriesOf(INBOX_ID).length === 0) {
-    row.innerHTML = `
-      <div class="container-row-left">
-        <div class="container-row-title">
-          <span class="type-mark inbox">Inbox</span>
-          Inbox
-        </div>
-        <p class="container-row-tagline muted">Empty. Click <em>Ad-hoc</em> above to capture an entry.</p>
-      </div>
-      <div class="container-row-right">—</div>
-    `;
-    return row;
-  }
-
-  const count   = entriesOf(INBOX_ID).length;
-  const open    = openActionsOf(INBOX_ID);
-  const overdue = open.filter(isOverdue).length;
-  const lt      = lastTouchedOf(INBOX_ID);
-
-  row.innerHTML = `
-    <div class="container-row-left">
-      <div class="container-row-title">
-        <span class="type-mark inbox">Inbox</span>
-        Inbox
-      </div>
-      <p class="container-row-tagline">${count} ${count === 1 ? 'entry' : 'entries'} waiting to be filed</p>
-      <div class="container-row-meta">
-        ${open.length ? `<span class="open-pill">${open.length} open${overdue ? ' · ' + overdue + ' overdue' : ''}</span>` : ''}
-      </div>
-    </div>
-    <div class="container-row-right">${lt ? fmtWhen(lt) : 'no activity'}</div>
-  `;
-  return row;
-}
-
-function renderContainerRow(c) {
-  const row = document.createElement('div');
-  row.className = 'container-row';
-  row.onclick = () => { location.hash = `#/c/${encodeURIComponent(c.id)}`; };
-
-  const open = openActionsOf(c.id);
-  const overdue = open.filter(isOverdue).length;
-  const lt = lastTouchedOf(c.id);
-  const typeLabel = containerLabel(c, 'short');
-  const typeCls   = containerTypeCls(c);
-
-  row.innerHTML = `
-    <div class="container-row-left">
-      <div class="container-row-title">
-        <span class="type-mark ${typeCls}">${typeLabel}</span>
-        ${escHtml(c.title)}
-      </div>
-      ${c.goal_or_purpose ? `<p class="container-row-tagline">${escHtml(c.goal_or_purpose)}</p>` : ''}
-      <div class="container-row-meta">
-        <span class="open-pill ${open.length === 0 ? 'zero' : ''}">
-          ${open.length} open${overdue ? ' · ' + overdue + ' overdue' : ''}
-        </span>
-        ${(c.tags || []).map(t => `<span>#${escHtml(t)}</span>`).join('')}
-      </div>
-    </div>
-    <div class="container-row-right">${lt ? fmtWhen(lt) : 'no activity'}</div>
-  `;
-  return row;
 }
 
 function renderRecent() {
@@ -1328,20 +1363,20 @@ function renderRecent() {
 
 // ---------- People view (derived from atom assignees) --------------
 
-function renderPeopleView(body) {
+// People view in the shell: the people roster fills the left panel (own scroll)
+// and the selected person's detail fills the right panel (own scroll).
+function renderPeopleLeft() {
+  const left = document.getElementById('ws-left');
+  if (!left) return;
   const people = derivePeople();
   if (!people.length) {
-    body.innerHTML = `<div class="empty muted people-empty">
-      No people yet. Assign an action to someone (an action atom's <em>assigned&nbsp;to</em>
-      field) and they'll appear here with their open work across every project.
-    </div>`;
+    left.innerHTML = `<div class="ps-hdr">People (0)</div>
+      <div class="empty muted small" style="padding:16px 14px;">No people yet. Assign an action to
+      someone (an action atom's <em>assigned&nbsp;to</em> field) and they'll appear here.</div>`;
     return;
   }
   if (!ui.personId || !people.find(p => p.name === ui.personId)) ui.personId = people[0].name;
-  const person = people.find(p => p.name === ui.personId);
-
-  const sidebar = `<div class="people-sidebar">
-    <div class="ps-hdr">People (${people.length})</div>
+  left.innerHTML = `<div class="ps-hdr">People (${people.length})</div>
     ${people.map(p => `
       <div class="person-row ${p.name === ui.personId ? 'active' : ''}" data-person="${escHtml(p.name)}"
            style="${p.name === ui.personId ? `border-left:3px solid ${p.color}` : ''}">
@@ -1358,18 +1393,28 @@ function renderPeopleView(body) {
           <span class="pw-bar">${miniBar(pw.progress, pw.color || p.color, 3)}</span>
           <span class="pw-val">${pw.progress}%</span>
         </div>`).join('')}
-      </div>`).join('')}
-  </div>`;
-
-  body.innerHTML = `<div class="people-wrap">${sidebar}${renderPersonDetail(person)}</div>`;
-
-  body.querySelectorAll('[data-person]').forEach(el => {
-    el.onclick = () => { ui.personId = el.dataset.person; ui.personTab = 'actions'; renderHomeView(); };
+      </div>`).join('')}`;
+  left.querySelectorAll('[data-person]').forEach(el => {
+    el.onclick = () => { ui.personId = el.dataset.person; ui.personTab = 'actions'; renderPeopleLeft(); renderPeopleRight(); };
   });
-  body.querySelectorAll('[data-ptabperson]').forEach(el => {
-    el.onclick = () => { ui.personTab = el.dataset.ptabperson; renderHomeView(); };
+}
+
+function renderPeopleRight() {
+  const right = document.getElementById('ws-right');
+  if (!right) return;
+  const people = derivePeople();
+  if (!people.length) {
+    right.innerHTML = `<div class="ws-pane"><div class="empty muted people-empty">
+      No people yet. Assign an action to someone (an action atom's <em>assigned&nbsp;to</em>
+      field) and they'll appear here with their open work across every project.</div></div>`;
+    return;
+  }
+  const person = people.find(p => p.name === ui.personId) || people[0];
+  right.innerHTML = `<div class="ws-pane">${renderPersonDetail(person)}</div>`;
+  right.querySelectorAll('[data-ptabperson]').forEach(el => {
+    el.onclick = () => { ui.personTab = el.dataset.ptabperson; renderPeopleRight(); };
   });
-  body.querySelectorAll('[data-open-entry]').forEach(el => {
+  right.querySelectorAll('[data-open-entry]').forEach(el => {
     el.onclick = () => {
       const a = state.atoms.find(x => x.id === el.dataset.openEntry);
       const e = a && state.entries.find(en => en.id === a.entry_id);
@@ -1377,15 +1422,15 @@ function renderPeopleView(body) {
     };
   });
   // T35: ☆ queue toggle on each People-view action row (same next-action queue
-  // as the dashboard — keep the summary count in sync).
-  body.querySelectorAll('[data-pq-queue]').forEach(el => {
+  // as the dashboard — keep the tab-strip count in sync).
+  right.querySelectorAll('[data-pq-queue]').forEach(el => {
     el.onclick = (ev) => {
       ev.stopPropagation();
       const a = state.atoms.find(x => x.id === el.dataset.pqQueue);
       if (!a) return;
       toggleQueued(a);
-      renderHomeView();
-      renderHomeSub();
+      renderPeopleRight();
+      renderWsTabs(currentRoute());
     };
   });
 }
@@ -2582,9 +2627,7 @@ function closeDrawer(silent = false) {
     renderEntryStack(r.id);
     renderActionRail(r.id);
   } else if (r.kind === 'home') {
-    renderHomeBody();
-    renderRecent();
-    renderHomeTagChips();
+    refreshHomeAfterEdit();
   }
 }
 
