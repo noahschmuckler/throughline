@@ -21,15 +21,15 @@ export const BUNDLE_SCHEMA = 'ingest-v1';
 export const BUNDLE_INSTRUCTIONS =
   'You are consulting on a draft ingestion for Throughline, a project-management tool. ' +
   'raw_dump is the user\'s unstructured brain dump. proposed{} is a local model\'s draft ' +
-  'breakdown of it into atoms (kinds: observation | decision | action | outcome) filed ' +
+  'breakdown of it into atoms (kinds: observation | decision | action) filed ' +
   'against containers (programs / projects / reference files) — state_summary{} lists the ' +
   'user\'s real workspace containers (program_id links a project to its parent program). ' +
   'Do NOT review the JSON formatting; it is machine-generated. Instead, help the user ' +
   'process the dump: (1) critique the breakdown — is each atom correctly typed and filed ' +
   'against the best container, and should any be split or merged? (kinds: observation = a ' +
   'reported fact, not a want/"should"; decision = a settled choice or requirement, incl. ' +
-  '"X should do Y"; action = a thing still to do, incl. deciding something not yet decided; ' +
-  'outcome = a result that closes one) (2) say what in raw_dump ' +
+  '"X should do Y"; action = a thing still to do, incl. deciding something not yet decided) ' +
+  '(2) say what in raw_dump ' +
   'the draft missed or mis-grouped; (3) help answer the needs_clarification[] questions; ' +
   '(4) prefer filing into existing state_summary containers — propose a new container only ' +
   'when nothing fits. Reply in plain prose for a human reader.';
@@ -56,7 +56,7 @@ export function DECISION_PROMPT(userName) {
     "bundle's proposed{} (the a… atoms and p… containers). Use new n… keys for atoms you are adding " +
     'and new p… keys for new containers. Each value is a verdict object: a "verb" — one of accept | ' +
     'edit | drop | recategorize | create | merge_into — plus only the fields you are setting: "kind" ' +
-    '(observation | decision | action | outcome; containers: project | reference_file), "body" or ' +
+    '(observation | decision | action; containers: project | reference_file), "body" or ' +
     '"title", "goal_or_purpose" (new containers), "program_id" (new containers only — a real ' +
     'type:"program" id from state_summary, to place the new project/reference inside that program), ' +
     '"target" (a real container id from state_summary, ' +
@@ -65,8 +65,7 @@ export function DECISION_PROMPT(userName) {
     'it), "note" (one line of reasoning), "confidence" (0.0–1.0). KIND RULES: observation = a ' +
     'reported fact or state (NOT a want or a "should"); decision = a SETTLED choice or requirement, ' +
     'including "the X should do Y" or "we will use Z"; action = a thing still to be done, INCLUDING ' +
-    'deciding something not yet decided ("decide whether…"); outcome = a result that closes an action ' +
-    'or decision. RULES: programs cannot hold atoms — ' +
+    'deciding something not yet decided ("decide whether…"). RULES: programs cannot hold atoms — ' +
     'never set target to a type:"program" container; file into a project or reference file within ' +
     'that program, creating one if needed. Never emit the same atom twice — one verdict per distinct ' +
     'fact/decision/action; before filing into an existing project, check its program_id in ' +
