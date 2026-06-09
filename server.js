@@ -15,6 +15,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 
 import { readState, writeState, dbPath } from './lib/store.js';
 import { listFolder, openFile } from './lib/files.js';
@@ -380,10 +381,75 @@ async function handleSetupBind(req, res) {
   return sendJson(res, 200, { ok: true, configured: true, ...result });
 }
 
+// T27 — Dethreader (M365 COM pathway). Runs the bundled `dethreader.ps1`
+// AS-IS: it drives Outlook via COM to export the currently-selected email's
+// conversation thread to Desktop\email-exports\<subject>_<ts>\ (a Markdown file
+// + an attachments\ subfolder), printing the paths to stdout. We parse the
+// Markdown path from stdout, read the file, and return its text so the
+// front-end can drop it straight into a new "email" entry.
+//
+// LOCAL + WINDOWS ONLY (needs Outlook desktop COM). The Worker 501s it. Set
+// THROUGHLINE_DETHREADER_DRYRUN=1 to skip the spawn and return a canned sample
+// (so the front-end flow is verifiable off-Windows).
+const DETHREADER_SCRIPT = process.env.THROUGHLINE_DETHREADER_SCRIPT || join(__dirname, 'dethreader.ps1');
+
+function dethreaderDryRunMarkdown() {
+  return '# Acme Payroll renewal vs. Gusto switch\n\n'
+    + '- Exported from selected Outlook conversation\n- Message count: 2\n\n'
+    + '---\n\n## RE: Acme Payroll renewal\n\n- **From:** Natalia Peden\n- **To:** Noah Schmuckler\n'
+    + '- **Date:** 2026-06-08 14:12\n\nConfirming the 06-30 auto-renew deadline. See attached quote.\n\n'
+    + '**Attachments for this message:**\n- [Acme_quote.pdf](attachments/Acme_quote.pdf)\n';
+}
+
+async function handleDethreader(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+
+  if (process.env.THROUGHLINE_DETHREADER_DRYRUN) {
+    const md = dethreaderDryRunMarkdown();
+    return sendJson(res, 200, { markdown: md, subject: 'Acme Payroll renewal vs. Gusto switch', mdPath: '(dry-run)', folder: '(dry-run)', dryRun: true });
+  }
+
+  if (process.platform !== 'win32') {
+    return sendJson(res, 501, { error: 'Dethreader runs on the local Windows install (it drives Outlook via COM).' });
+  }
+
+  try { await stat(DETHREADER_SCRIPT); }
+  catch { return sendJson(res, 500, { error: `dethreader.ps1 not found at ${DETHREADER_SCRIPT}` }); }
+
+  let stdout = '', stderr = '';
+  const code = await new Promise((resolve) => {
+    const ps = spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', DETHREADER_SCRIPT], { windowsHide: true });
+    const timer = setTimeout(() => { try { ps.kill(); } catch {} }, 180000); // 3-min cap
+    ps.stdout.on('data', d => { stdout += d.toString(); });
+    ps.stderr.on('data', d => { stderr += d.toString(); });
+    ps.on('error', (e) => { clearTimeout(timer); stderr += String(e.message || e); resolve(-1); });
+    ps.on('close', (c) => { clearTimeout(timer); resolve(c); });
+  });
+
+  if (code !== 0) {
+    // The script throws plain messages (e.g. "Please select a single email in Outlook…"); surface them.
+    const msg = (stderr.trim() || stdout.trim() || `dethreader.ps1 exited with code ${code}`).split('\n').slice(0, 6).join(' ').trim();
+    return sendJson(res, 500, { error: msg });
+  }
+
+  const mdPath = (stdout.match(/^Markdown:\s*(.+)$/m)?.[1] || '').trim();
+  const folder = (stdout.match(/^Folder:\s*(.+)$/m)?.[1] || '').trim();
+  if (!mdPath) return sendJson(res, 500, { error: 'Could not find the exported Markdown path in the script output.' });
+
+  let markdown;
+  try { markdown = await readFile(mdPath, 'utf8'); }
+  catch (e) { return sendJson(res, 500, { error: `Export ran but the Markdown could not be read: ${e.message}` }); }
+  if (markdown.charCodeAt(0) === 0xFEFF) markdown = markdown.slice(1); // strip UTF-8 BOM the script writes
+
+  const subject = (markdown.match(/^#\s+(.+?)\s*$/m)?.[1] || '').trim();
+  return sendJson(res, 200, { markdown, subject, mdPath, folder });
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     if (url.pathname === '/api/state') return await handleState(req, res);
+    if (url.pathname === '/api/dethreader') return await handleDethreader(req, res);
     if (url.pathname === '/api/atomize') return await handleAtomize(req, res);
     if (url.pathname === '/api/classify') return await handleClassify(req, res);
     if (url.pathname === '/api/consult') return await handleConsult(req, res);

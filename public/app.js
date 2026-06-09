@@ -664,6 +664,7 @@ function wireAddMenu() {
     'new-adhoc': () => openAdHocEntryDrawer(),
     'import-file': () => openFileImport(),
     'paste-copilot': () => openCopilotImport(),
+    'dethreader': () => runDethreader(),
   };
   btn.onclick = (e) => {
     e.stopPropagation();
@@ -2561,6 +2562,40 @@ function importTextFile(file) {
     importText(text, { title: titleFromMarkdown(text, file.name), kind: 'meeting' });
   };
   reader.readAsText(file);
+}
+
+// T27 Dethreader — runs the bundled dethreader.ps1 on the local Windows server
+// (drives Outlook COM to export the selected email thread → Markdown + an
+// attachments folder), then drops the Markdown straight into a new "email"
+// entry (one click from Atomize). Windows + Outlook only; the server 501s
+// elsewhere.
+async function runDethreader() {
+  const busy = showToast('🧵 Dethreading the selected Outlook email — saving the thread + attachments…', true);
+  try {
+    const r = await fetch('/api/dethreader', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `Dethreader failed (HTTP ${r.status}).`);
+    const md = String(data.markdown || '');
+    if (!md.trim()) throw new Error('The export produced no Markdown.');
+    const title = (data.subject && data.subject.trim()) || titleFromMarkdown(md, 'Email thread');
+    importText(md, { title, kind: 'email' });   // creates the email entry + opens the drawer
+  } catch (e) {
+    alert('Dethreader: ' + (e.message || e));
+  } finally {
+    busy.remove();
+  }
+}
+
+// Minimal transient toast (used by the Dethreader busy state). Pass sticky=true
+// to keep it until the caller .remove()s it; otherwise it auto-dismisses.
+function showToast(message, sticky = false) {
+  const el = document.createElement('div');
+  el.className = 'tl-toast';
+  el.textContent = message;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  if (!sticky) setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, 3200);
+  return el;
 }
 
 function openEntryDrawer(containerId, entryId, scrollToAtomId = null) {

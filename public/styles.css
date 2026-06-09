@@ -1775,3 +1775,13 @@ main.main-ws { padding: 0; }
   .ws-left { flex-basis: 44%; min-width: 260px; }
   .ws-right { padding: 16px 16px 48px; }
 }
+
+/* Transient toast (Dethreader busy state, etc.) */
+.tl-toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px);
+  z-index: 120; max-width: min(560px, 92vw);
+  background: var(--navy); color: #fff; font-size: 0.85rem; line-height: 1.4;
+  padding: 12px 18px; border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.28);
+  opacity: 0; transition: opacity 220ms var(--ease), transform 220ms var(--ease); pointer-events: none;
+}
+.tl-toast.show { opacity: 1; transform: translate(-50%, 0); }

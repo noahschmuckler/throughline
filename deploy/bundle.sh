@@ -37,6 +37,7 @@ rm -f "$ZIP"
 zip -qr "$ZIP" \
   package.json \
   server.js \
+  dethreader.ps1 \
   lib/ \
   shared/ \
   public/ \

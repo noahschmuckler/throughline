@@ -181,6 +181,11 @@ export default {
     if (url.pathname === '/api/fs/list' || url.pathname.startsWith('/api/fs/')) {
       return json({ error: 'Folder access is only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
     }
+    // Dethreader (T27) drives Outlook via COM on the local Windows install — no
+    // cloud equivalent. 501 so the front-end shows a clear message.
+    if (url.pathname === '/api/dethreader') {
+      return json({ error: 'Dethreader runs on the local Windows install (it drives Outlook), not the cloud demo.' }, { status: 501 });
+    }
     // Async jobs + consult sessions (T16/T26) are machine-local Node features —
     // the front-end probes /api/jobs and falls back to the synchronous
     // /api/atomize + /api/consult paths when it sees this 501.
