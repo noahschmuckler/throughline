@@ -6,54 +6,65 @@ that aren't documented there or in the code — the deploy quirks, branch
 topology at time of writing, and patterns worth knowing before changing
 things.
 
-Snapshot date: 2026-06-08.
+Snapshot date: 2026-06-09.
 
 ## WHERE WE ARE NOW (read this first)
 
-**SPRINT 1 "industrial ingestion" + PHASE-0 FIXES — MERGED to `main` and
-PUBLISHED (v0.2.0, sha `b3f2f0d`, 2026-06-08).** Noah's orange test PASSED
-("working very well on real things"); fast-forward merged + run through the full
-publish chain (`deploy/publish-throughline.sh` → meridian-briefing `main`
-pushed). **Only remaining external step: CR DEV `git pull` to serve v0.2.0** (a
-separate static box this repo can't reach; until it pulls, the tile serves the
-prior build).
+**SPRINT 2 "Findability & Focus" — BUILT on branch `findability-focus`
+(2026-06-09, pushed, headless-verified, NOT merged — awaiting Noah's orange
+test).** Pure front-end (`public/app.js`, `index.html`, `styles.css`), so a
+preview is a `public\` copy over the install (hard-refresh Ctrl+Shift+R) OR the
+branch-run. Built to relieve two pains Noah hit using v0.2.0 — a growing,
+overwhelming project list and too many open actions to find the ones to do:
+- **T36** — the dashboard search now spans **actions**, not just project names:
+  `matchingActions()` finds open action atoms by body + `assigned_to`, with
+  **Overdue / Due≤7d / Not-queued** filter chips; a "⚡ Matching actions" list
+  (shown only while searching/filtering) carries a ☆ queue toggle + click-
+  through. Search "email" → star the ones to do.
+- **T35** — the ☆ next-action queue toggle is now on **People-view** action rows.
+- **T34** — **Organize mode + named dashboard "shelves" (views).** Tabs above the
+  grid; one shelf per top-level tile (default Main); **"All" always shows
+  everything**. ⚙ Organize makes tiles draggable: drag onto a view tab to file it
+  (e.g. "Back burner"), drag to reorder; create/rename/delete views, set the
+  landing view. **Stored in localStorage — per-user/per-browser** (organizing is
+  personal, must not reshape the other operator's board — like the profile name;
+  revisit with multi-user circles / M3). Search transcends shelves (a filed-away
+  project stays findable); the **queue + action search stay GLOBAL** (Noah's
+  constraint).
+- **T33** — expanding an item in the decision review no longer jumps the
+  viewport to the top (`renderTriage` preserves `.t-clusters` scroll).
+Full plan: TICKETS.md "Processing session 2026-06-08". Headless-verified the
+render/structure of all four; the **drag-and-drop (T34)** and **scroll-on-expand
+(T33)** want Noah's eyes on real use.
 
-**Settled / changed this session (2026-06-08, all on `main`):**
-- **gpt-mini RETIRED from the pipeline** (closes T30/T20, downgrades T7). A
-  direct cdsapi probe (`scripts/test-cdsapi.ps1`, kept in the repo) proved mini
-  is alive but slower + no-better than gpt-5.4. Atomize now defaults to tier
-  `escalate` = **gpt-5.4** (`atomizeOpts` default flipped reason→escalate;
-  consult was already 5.4). mini kept on the gateway for future small tasks
-  (atoms→prose).
-- **Provider default flipped heuristic → cdsapi.** `.env.example` + the
-  installer fallback now ship `LLM_PROVIDER=cdsapi`, and an update MIGRATES an
-  existing `LLM_PROVIDER=heuristic` (the old default) → cdsapi, so a
-  non-technical user gets a working on-network model with zero `.env` editing.
-  NB Noah's OWN installed `.env` still read heuristic at session end (he updated
-  before the migration shipped) — it flips on his next update or a one-line edit.
-- **T31** decision-set reopen (`resumeReviewIfPending` in app.js), **T28**
-  installer preserves `data\` (jobs + consult sessions) on update — confirmed
-  live ("carried everything over"), **T32** tightened atom-kind prompt
-  definitions. New ticket **T37** logged (intake-type picker on Chat-about-this
-  → T29's first slice).
+**Decision tree (opens next session) — orange test of `findability-focus`:**
+- **Pass** → merge → `main` (fast-forward) → publish chain
+  (`deploy/publish-throughline.sh` → push meridian-briefing → CR DEV `git pull`s)
+  → ships as the next v0.2.0 build.
+- **Issues** → fix on the branch.
+Then **next sprint candidates**: the **E3 design conversation** (T11 keystone,
+T9/T19, T17 — its own VISION.md track); **T37** (intake-type picker); **T38**
+(store 500s on a 0-byte state.json — robustness); **T27** (dethreader, floats);
+**T7** re-judge after a real 5.4-atomize run.
 
-**NEXT: sprint 2 = "Findability & Focus"** (NEW branch off `main`; full plan in
-TICKETS.md "Processing session 2026-06-08"): **T36** [high] search must match
-ACTION atoms not just project names (Noah's operational top ask), **T35** ☆
-queue toggle on People-view actions, **T33** drawer-open preserves scroll,
-**T34** [high, DESIGN-SPIKE FIRST] Organize mode + multiple named dashboard
-views (decide where per-user view membership/ordering live — couples to the
-per-user queue + multi-user/T3; the queue stays SHARED across views). **Then the
-E3 design conversation** (T11 keystone, T9/T19 inside, T17 after T26) as its own
-VISION.md track — deferred from the original "sprint 2" because the orange test
-surfaced concrete daily-use pain that outranks it.
+**Already shipped — SPRINT 1 "industrial ingestion" + Phase-0 fixes: MERGED to
+`main` + PUBLISHED (v0.2.0, sha `b3f2f0d`, 2026-06-08); orange test PASSED
+("working very well on real things").** That round also: **retired gpt-mini**
+(atomize → gpt-5.4; `scripts/test-cdsapi.ps1` proved mini alive-but-slower;
+closes T30/T20, downgrades T7); **flipped the provider default heuristic →
+cdsapi** (`.env.example` + installer, plus an update-time `.env` migration so
+non-technical users get a model with zero editing — **NB Noah's OWN installed
+`.env` may still read heuristic** until his next update or a one-line edit);
+**T31** consult reopen, **T28** installer preserves `data\`, **T32** atom-kind
+prompts. **CR DEV `git pull` is the one external step that may still be pending**
+for v0.2.0 to serve.
 
-_(The sprint-1 orange-test crib + the T20 A/B that lived here are resolved — the
-test passed and the A/B verdict (retire mini, atomize on gpt-5.4) is in the
-settled items above. Branch-run preview flow for future sprints is unchanged:
-pull the feature branch in the GitHub Desktop checkout → `schtasks /End /TN
-"ThroughlineServer"` → `node --env-file="$env:USERPROFILE\throughline\.env"
-server.js`; Ctrl+C + `schtasks /Run` to restore.)_
+_(Preview flow for a feature branch on orange: front-end-only sprints (like
+sprint 2) can just copy `public\` over the install + hard-refresh. For a branch
+that also changes server.js/lib/shared, branch-run is REQUIRED: pull the branch
+in the GitHub Desktop checkout → `schtasks /End /TN "ThroughlineServer"` →
+`node --env-file="$env:USERPROFILE\throughline\.env" server.js`; Ctrl+C +
+`schtasks /Run` to restore.)_
 
 Backdrop: **the ingestion epic (v1 consult → v2 decisions-back-in → T13
 native gpt-5.4 engine) is SHIPPED, live-verified, and MERGED to `main`**
@@ -272,7 +283,7 @@ until he triggers a *processing session* (triage → prioritize → plan a sprin
 clear). The file's header documents the format and workflow. (The larger
 deferred V1+ backlog lives in `BUILDPATH.md` §H.)
 
-## Branch topology (as of 2026-06-08)
+## Branch topology (as of 2026-06-09)
 
 - **`main`** — carries the full collapsed lineage plus **sprint 1 "industrial
   ingestion" + the 2026-06-08 Phase-0 fixes** (merged fast-forward + published
@@ -285,8 +296,11 @@ deferred V1+ backlog lives in `BUILDPATH.md` §H.)
   AI-ingestion epic (v1 consult + v2 decisions-back-in + T13 native gpt-5.4
   engine + the run-feedback fixes).
 - **`industrial-ingestion`** — sprint 1's branch; **merged to `main` (fast-
-  forward) and DELETED local + remote on 2026-06-08.** Its history lives in
-  `main`. Sprint 2 starts on a fresh branch.
+  forward) and DELETED local + remote on 2026-06-08.** Its history lives in `main`.
+- **`findability-focus`** (origin, **the active sprint branch**) — branched off
+  `main`. Sprint 2 complete on it (T36, T35, T33, T34 + the T34 design spike;
+  pushed, headless-verified). **Awaiting Noah's orange test; NOT merged.** On a
+  pass: fast-forward merge → publish chain → delete the branch.
 
 **Workflow: every new piece of work gets a NEW branch off up-to-date
 `main`**, merged back after Noah's review. Pushing `main` and feature
