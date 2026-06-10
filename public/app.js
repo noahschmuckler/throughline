@@ -1823,7 +1823,8 @@ function mountBrowser(mountEl, opts) {
   async function load(path) {
     mountEl.innerHTML = `<div class="muted small">Loading…</div>`;
     try {
-      const r = await fetch(`${opts.listUrl}?path=${encodeURIComponent(path)}`);
+      const circleQ = opts.circle ? `&circle=${encodeURIComponent(opts.circle)}` : '';
+      const r = await fetch(`${opts.listUrl}?path=${encodeURIComponent(path)}${circleQ}`);
       if (r.status === 501) {
         mountEl.innerHTML = `<div class="muted small">Folder browsing is only available in the local app, not the cloud demo.</div>`;
         opts.onLoad && opts.onLoad(null);
@@ -1853,9 +1854,19 @@ function mountBrowser(mountEl, opts) {
 function openFolderBrowser(c) {
   const initial = (typeof c.folder === 'string') ? c.folder : '';
   let picked = { path: initial, absPath: '' };
+  // M3: browse against the container's OWN circle root, not the primary
+  // ONEDRIVE_ROOT — otherwise a project moved into another circle can only be
+  // bound against the primary folder. Only set when federation is live and the
+  // circle isn't the primary (primary resolves to ONEDRIVE_ROOT anyway).
+  const browseCircle = (c._circle && c._circle !== primaryCircleId() && (state.circles || []).length > 1)
+    ? c._circle : '';
+  const circleHint = browseCircle
+    ? `<p class="muted small">Browsing the <strong>${escHtml(circleName(browseCircle))}</strong> circle's folders.</p>`
+    : '';
   openModal(`
     <h2 class="modal-title">Bind a folder</h2>
     <p class="muted small">Pick the OneDrive folder whose files this ${escHtml(containerLabel(c))} should show. Throughline only reads and opens them — it never changes the folder.</p>
+    ${circleHint}
     <div class="fb" id="fb"><div class="muted small">Loading…</div></div>
     <div class="modal-actions">
       <button class="btn ghost" data-act="cancel">Cancel</button>
@@ -1871,6 +1882,7 @@ function openFolderBrowser(c) {
       listUrl: '/api/fs/list',
       initialPath: initial,
       bindLabel: 'Bind to',
+      circle: browseCircle,
       onLoad: (st) => { if (st) picked = st; useBtn.disabled = !st; },
     });
   });
