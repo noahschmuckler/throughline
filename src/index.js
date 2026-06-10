@@ -181,6 +181,12 @@ export default {
     if (url.pathname === '/api/fs/list' || url.pathname.startsWith('/api/fs/')) {
       return json({ error: 'Folder access is only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
     }
+    // Backups & restore write timestamped copies of state.json to disk + the
+    // OneDrive folder — local-Node only. Same 501 pattern; the front-end hides
+    // the Backups UI when it sees this.
+    if (url.pathname === '/api/backups' || url.pathname.startsWith('/api/backups/')) {
+      return json({ error: 'Backups are only available on the local (Node) backend, not the cloud demo.' }, { status: 501 });
+    }
     // Dethreader (T27) drives Outlook via COM on the local Windows install — no
     // cloud equivalent. 501 so the front-end shows a clear message.
     if (url.pathname === '/api/dethreader') {

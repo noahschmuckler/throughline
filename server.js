@@ -17,9 +17,10 @@ import { dirname, join, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-import { readState, writeState, dbPath } from './lib/store.js';
+import { readState, writeState, dbPath, readStateAt } from './lib/store.js';
 import { loadFederated, saveFederated } from './lib/federation.js';
 import { discoverCircles, circleById } from './lib/circles.js';
+import { maybeAutoBackup, listBackups, readBackupContent, restoreBackup, writeBackup, BACKUP_RE } from './lib/backups.js';
 import { listFolder, openFile } from './lib/files.js';
 import { setupStatus, listSetupFolder, bindFolder, dbInfo } from './lib/setup.js';
 import { atomizeEntry, atomizeOpts } from './shared/atomize.js';
@@ -99,7 +100,7 @@ async function handleState(req, res) {
     let body;
     try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
     if (!body || typeof body !== 'object') return sendJson(res, 400, { error: 'body must be an object' });
-    const { state, conflicts } = await saveFederated(body);
+    const { state, conflicts } = await saveFederated(body, { onCircleWritten: maybeAutoBackup });
     return sendJson(res, 200, { ok: true, saved_at: new Date().toISOString(), state, conflicts });
   }
   return sendJson(res, 405, { error: `${req.method} not allowed` });
@@ -342,6 +343,71 @@ async function handleFsOpen(req, res) {
       return sendJson(res, 400, { error: err.message });
     }
     return sendJson(res, 500, { error: err.message });
+  }
+}
+
+// Backups & restore — LOCAL ONLY (need a filesystem; the Worker 501s these).
+// Resolve a circle object by id; null → primary (so a single-folder install works
+// with no id). Backups are written next to each circle's state.json + machine-local.
+async function circleObjFor(circleId) {
+  const reg = await discoverCircles();
+  return circleById(reg, circleId || '');
+}
+
+// GET  /api/backups?circle=<id>  → list snapshots (newest-first, both locations).
+// POST /api/backups?circle=<id>  → take a manual snapshot NOW (force, both dests).
+async function handleBackups(req, res, url) {
+  const circle = await circleObjFor(url.searchParams.get('circle'));
+  if (!circle) return sendJson(res, 404, { error: 'circle not found' });
+  if (req.method === 'GET') {
+    try { return sendJson(res, 200, { circle: { id: circle.id, name: circle.name }, backups: await listBackups(circle) }); }
+    catch (e) { return sendJson(res, 500, { error: e.message }); }
+  }
+  if (req.method === 'POST') {
+    // Manual snapshot of the circle's CURRENT live state. Refuse if its file is
+    // malformed (would otherwise record an empty backup of real-but-unreadable data).
+    let current;
+    try { current = await readStateAt(circle.statePath); }
+    catch (e) { return sendJson(res, 422, { error: `circle file unreadable, refusing to back up: ${e.message}` }); }
+    try {
+      const r = await writeBackup(circle, current, 'manual');
+      return sendJson(res, 200, { ok: true, ...r });
+    } catch (e) { return sendJson(res, 500, { error: e.message }); }
+  }
+  return sendJson(res, 405, { error: `${req.method} not allowed` });
+}
+
+// GET /api/backups/content?circle=<id>&file=<name>&location=local|onedrive
+async function handleBackupContent(req, res, url) {
+  if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  const file = url.searchParams.get('file') || '';
+  if (!BACKUP_RE.test(file)) return sendJson(res, 400, { error: 'invalid backup filename' });
+  const circle = await circleObjFor(url.searchParams.get('circle'));
+  if (!circle) return sendJson(res, 404, { error: 'circle not found' });
+  const location = url.searchParams.get('location') === 'onedrive' ? 'onedrive' : 'local';
+  try { return sendJson(res, 200, { content: await readBackupContent(circle, file, location) }); }
+  catch (e) {
+    if (e.code === 'ENOENT') return sendJson(res, 404, { error: 'backup not found' });
+    return sendJson(res, 500, { error: e.message });
+  }
+}
+
+// POST /api/backups/restore  { circle, file, location }
+async function handleBackupRestore(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
+  let body;
+  try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
+  const file = typeof body?.file === 'string' ? body.file : '';
+  if (!BACKUP_RE.test(file)) return sendJson(res, 400, { error: 'invalid backup filename' });
+  const circle = await circleObjFor(typeof body?.circle === 'string' ? body.circle : '');
+  if (!circle) return sendJson(res, 404, { error: 'circle not found' });
+  const location = body?.location === 'onedrive' ? 'onedrive' : 'local';
+  try {
+    const r = await restoreBackup(circle, file, location);
+    return sendJson(res, 200, { ok: true, ...r });
+  } catch (e) {
+    if (e.code === 'ENOENT') return sendJson(res, 404, { error: 'backup not found' });
+    return sendJson(res, 500, { error: e.message });
   }
 }
 
@@ -600,6 +666,9 @@ const server = createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/attachments/')) return await serveAttachment(req, res, url.pathname);
     if (url.pathname === '/api/fs/list') return await handleFsList(req, res, url);
     if (url.pathname === '/api/fs/open') return await handleFsOpen(req, res);
+    if (url.pathname === '/api/backups') return await handleBackups(req, res, url);
+    if (url.pathname === '/api/backups/content') return await handleBackupContent(req, res, url);
+    if (url.pathname === '/api/backups/restore') return await handleBackupRestore(req, res);
     if (url.pathname === '/api/setup/status') return await handleSetupStatus(req, res);
     if (url.pathname === '/api/setup/browse') return await handleSetupBrowse(req, res, url);
     if (url.pathname === '/api/setup/dbinfo') return await handleSetupDbInfo(req, res, url);

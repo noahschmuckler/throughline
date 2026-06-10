@@ -5048,12 +5048,17 @@ function openSettingsModal() {
       <span class="label">Role (optional)</span>
       <input type="text" id="set-role" value="${escHtml(role)}" placeholder="e.g. Program manager, IMFM Provider Corner" />
     </label>
+    <hr class="set-sep" />
+    <button class="btn block" data-act="set-backups">🗄 Backups &amp; restore…</button>
+    <p class="muted small">Timestamped copies of your data, saved automatically to this device and your
+    OneDrive folder. Browse, snapshot, or roll back.</p>
     <div class="modal-actions">
       <button class="btn" data-act="set-cancel">Cancel</button>
       <button class="btn primary" data-act="set-save">Save</button>
     </div>
   `, (modal) => {
     modal.querySelector('[data-act="set-cancel"]').onclick = closeModal;
+    modal.querySelector('[data-act="set-backups"]').onclick = () => openBackupsModal();
     modal.querySelector('[data-act="set-save"]').onclick = () => {
       try {
         localStorage.setItem('throughline:user_name', modal.querySelector('#set-name').value.trim());
@@ -5062,6 +5067,147 @@ function openSettingsModal() {
       closeModal();
     };
   });
+}
+
+// ---------- Backups & restore (local-Node only) ----------------------------
+// A timestamped copy of each circle's state.json is written to the orange device
+// AND to a per-user folder inside that circle's OneDrive Throughline directory,
+// throttled-on-change. This modal lists them, takes a manual snapshot, previews a
+// snapshot's diff against the current state, and restores one. The Worker 501s
+// the endpoints → the modal shows a "local backend only" notice.
+
+const REASON_LABEL = { auto: 'auto', manual: 'manual', 'pre-restore': 'pre-restore' };
+
+function backupCirclesForUi() {
+  const cs = state.circles || [];
+  if (cs.length) return cs.map(c => ({ id: c.id, name: c.name, primary: !!c.primary }));
+  return [{ id: '', name: 'This workspace', primary: true }];   // single-folder install
+}
+
+// Counts of objects currently in a given circle (in-memory). '' / single → all.
+function currentCircleCounts(circleId) {
+  const inC = (o) => !circleId || !o._circle || o._circle === circleId;
+  return {
+    containers: state.containers.filter(inC).length,
+    entries: state.entries.filter(inC).length,
+    atoms: state.atoms.filter(inC).length,
+  };
+}
+
+async function openBackupsModal(circleId) {
+  const circles = backupCirclesForUi();
+  if (circleId == null) circleId = (circles.find(c => c.id === ui.circle) || circles.find(c => c.primary) || circles[0]).id;
+
+  openModal(`<h2>Backups &amp; restore</h2><p class="muted small">Loading…</p>`, () => {});
+
+  let resp, status;
+  try {
+    const r = await fetch(`/api/backups?circle=${encodeURIComponent(circleId)}`, { cache: 'no-store' });
+    status = r.status;
+    resp = await r.json().catch(() => ({}));
+  } catch (e) { status = 0; resp = { error: e.message }; }
+
+  if (status === 501) {
+    openModal(`
+      <h2>Backups &amp; restore</h2>
+      <p class="muted">Backups run on the local app only (they write to this device and your OneDrive
+      folder). This cloud demo can't take them.</p>
+      <div class="modal-actions"><button class="btn" data-act="close">Close</button></div>`,
+      (m) => { m.querySelector('[data-act="close"]').onclick = closeModal; });
+    return;
+  }
+
+  const list = Array.isArray(resp?.backups) ? resp.backups : [];
+  const sel = circles.length > 1 ? `
+    <label class="field">
+      <span class="label">Circle</span>
+      <select id="bk-circle">${circles.map(c => `<option value="${escHtml(c.id)}"${c.id === circleId ? ' selected' : ''}>${escHtml(c.name)}${c.primary ? ' (yours)' : ''}</option>`).join('')}</select>
+    </label>` : '';
+
+  const rows = list.length ? list.map(b => {
+    const when = b.created_at ? new Date(b.created_at).toLocaleString() : '';
+    const locs = (b.locations || []).map(l => l === 'onedrive' ? `OneDrive` : 'this device').join(' · ');
+    const kb = b.size ? ` · ${(b.size / 1024).toFixed(0)} KB` : '';
+    const peer = b.host ? ` · ${escHtml(b.host)}` : '';
+    return `<div class="bk-row" data-file="${escHtml(b.file)}">
+      <div class="bk-meta">
+        <strong>${escHtml(when)}</strong>
+        <span class="bk-badge bk-${escHtml(b.reason || 'auto')}">${escHtml(REASON_LABEL[b.reason] || b.reason || 'auto')}</span>
+        <div class="muted small">${escHtml(locs)}${kb}${peer}</div>
+      </div>
+      <div class="bk-actions">
+        <button class="btn tiny" data-bk-preview="${escHtml(b.file)}">Preview</button>
+        <button class="btn tiny" data-bk-restore="${escHtml(b.file)}">Restore…</button>
+      </div>
+    </div>`;
+  }).join('') : `<p class="muted">No backups yet. They appear automatically as you work, or take one now.</p>`;
+
+  openModal(`
+    <h2>Backups &amp; restore</h2>
+    ${sel}
+    <p class="muted small">A timestamped copy of this circle is saved to this device and your OneDrive
+    folder whenever its contents change. Restoring rewinds this circle on this machine; if your dyad
+    partner is editing at the same time, their changes can still merge back in.</p>
+    <div class="bk-list">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn" data-act="close">Close</button>
+      <button class="btn primary" data-act="snapshot">📸 Take snapshot now</button>
+    </div>`, (m) => {
+    m.querySelector('[data-act="close"]').onclick = closeModal;
+    m.querySelector('#bk-circle')?.addEventListener('change', (e) => openBackupsModal(e.target.value));
+    m.querySelector('[data-act="snapshot"]').onclick = async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Saving…';
+      try {
+        const r = await fetch(`/api/backups?circle=${encodeURIComponent(circleId)}`, { method: 'POST' });
+        if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || `HTTP ${r.status}`); }
+        showToast('📸 Snapshot saved');
+        openBackupsModal(circleId);
+      } catch (err) { showToast(`Snapshot failed: ${err.message}`, true); e.target.disabled = false; e.target.textContent = '📸 Take snapshot now'; }
+    };
+    m.querySelectorAll('[data-bk-preview]').forEach(btn => btn.onclick = () => previewBackup(circleId, btn.dataset.bkPreview, list));
+    m.querySelectorAll('[data-bk-restore]').forEach(btn => btn.onclick = () => restoreBackupFromUi(circleId, btn.dataset.bkRestore, list));
+  });
+}
+
+function backupLocationFor(list, file) {
+  const item = (list || []).find(b => b.file === file);
+  const locs = item?.locations || ['local'];
+  return locs.includes('local') ? 'local' : 'onedrive';
+}
+
+async function previewBackup(circleId, file, list) {
+  const location = backupLocationFor(list, file);
+  try {
+    const r = await fetch(`/api/backups/content?circle=${encodeURIComponent(circleId)}&file=${encodeURIComponent(file)}&location=${location}`, { cache: 'no-store' });
+    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || `HTTP ${r.status}`); }
+    const { content } = await r.json();
+    const snap = { containers: (content.containers || []).length, entries: (content.entries || []).length, atoms: (content.atoms || []).length };
+    const cur = currentCircleCounts(circleId);
+    const line = (label, s, c) => {
+      const d = s - c;
+      const delta = d === 0 ? 'same' : (d > 0 ? `+${d} vs now` : `${d} vs now`);
+      return `${label}: ${s} (${delta})`;
+    };
+    alert(`This snapshot contains:\n\n• ${line('Projects/refs', snap.containers, cur.containers)}\n• ${line('Entries', snap.entries, cur.entries)}\n• ${line('Atoms', snap.atoms, cur.atoms)}\n\nRestoring replaces the current contents of this circle with the above.`);
+  } catch (err) { showToast(`Preview failed: ${err.message}`, true); }
+}
+
+async function restoreBackupFromUi(circleId, file, list) {
+  const location = backupLocationFor(list, file);
+  const item = (list || []).find(b => b.file === file);
+  const when = item?.created_at ? new Date(item.created_at).toLocaleString() : file;
+  if (!confirm(`Restore this circle to the snapshot from ${when}?\n\n• This replaces the circle's current contents on THIS machine.\n• A safety backup of the current state is taken first, so you can undo it.\n• If your dyad partner is editing right now, their changes may still merge back in.`)) return;
+  try {
+    const r = await fetch('/api/backups/restore', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ circle: circleId, file, location }),
+    });
+    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || `HTTP ${r.status}`); }
+    await loadState();
+    render();
+    closeModal();
+    showToast('↩ Restored from backup (a safety copy of the prior state was saved)');
+  } catch (err) { showToast(`Restore failed: ${err.message}`, true); }
 }
 
 function downloadJson(obj, filename) {

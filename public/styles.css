@@ -1082,6 +1082,29 @@ label.field > .label {
 }
 
 /* ------------------------------------------------------------------ */
+/* Backups & restore modal                                             */
+/* ------------------------------------------------------------------ */
+
+.btn.block { display: block; width: 100%; text-align: left; }
+.set-sep { border: none; border-top: 1px solid var(--mute-soft); margin: 18px 0 14px; }
+
+.bk-list { max-height: 50vh; overflow-y: auto; margin: 8px 0; }
+.bk-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 4px; border-bottom: 1px solid var(--mute-soft);
+}
+.bk-row:last-child { border-bottom: none; }
+.bk-meta strong { font-size: 0.92rem; }
+.bk-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.bk-badge {
+  display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 1px 7px;
+  border-radius: 10px; margin-left: 6px; vertical-align: middle;
+  background: var(--mute-soft); color: var(--mute);
+}
+.bk-badge.bk-manual { background: #e7f0ff; color: #2c5fb3; }
+.bk-badge.bk-pre-restore { background: #fdeede; color: #9a6212; }
+
+/* ------------------------------------------------------------------ */
 /* Misc                                                                */
 /* ------------------------------------------------------------------ */
 
