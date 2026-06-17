@@ -71,13 +71,33 @@ What the arc shipped (oldest→newest on the now-merged branch):
    pieces: **VISION.md §M3**. **Live-tested by Noah** (set up Amanda's "crhc uc"
    circle; the blank-file bug was found + fixed live).
 
-**DEPS CHANGED — the server is NO LONGER zero-dependency.** Loop added
-`@azure/msal-node` + `turndown`. `deploy/bundle.sh` now **vendors a prod-only
-`node_modules`** (~19 MB → 4.1 MB zip), `package-lock.json` is **tracked**. On
-orange `npm ci` against Optum's internal registry is flaky (TLS) — easiest is to
-**copy the WHOLE `node_modules`** from the built bundle (or from the
-`loop_de_loop` install — same packages). Copying only a few dirs fails (msal-node
-needs `@azure/msal-common` + `jsonwebtoken`'s whole subtree).
+**DEPS — the BOOT PATH is zero-dependency again (2026-06-17, branch
+`lazy-loop-deps`).** Loop added `@azure/msal-node` + `turndown`, but those are
+the ONLY npm runtime deps and they live exclusively in the (shelved) Loop intake.
+`server.js` now **lazy-loads** `lib/graph-client.js` / `lib/loop.js` /
+`lib/loop-html.js` via dynamic `import()` inside the `/api/loop/*` handlers
+(`loadGraph`/`loadLoop`/`loadLoopHtml`), so **the server boots with NO
+`node_modules` at all** (verified: full boot + `/api/state` 200 with
+`node_modules` removed). A missing dep only surfaces as a clear 500 on an actual
+Loop call — which can't happen while the button is shelved. This makes the
+**pure `git pull` + `node server.js`** run path work on orange with nothing
+outside GitHub (see the run-path note below). `deploy/bundle.sh` still vendors a
+prod-only `node_modules` into the CR-DEV bundle (~4 MB zip) and
+`package-lock.json` stays tracked — both only matter if/when Loop (T41) is
+un-shelved or the CR-DEV installer path is used again.
+
+**ORANGE RUN PATH (current, 2026-06-17): run in place from the GitHub Desktop
+clone — NOT the CR-DEV installer.** The meridian-briefing/CR-DEV distributor is
+under scrutiny ("server safe for internal data?" question), so Noah is keeping
+that server untouched and running Throughline straight from his orange git clone.
+Path: GitHub Desktop → Sync `main` → from the clone run
+`powershell -ExecutionPolicy Bypass -File deploy\register-task.ps1` (registers
+the `ThroughlineServer` task to run `node --env-file=.env server.js` IN PLACE
+from the clone; creates `.env` from `.env.example` if absent — reuse the existing
+working `.env` by copying it in first). Update later = Sync + `Stop-ScheduledTask`
+/`Start-ScheduledTask -TaskName ThroughlineServer`. No npm, no zip, no CR-DEV
+pull. Noah is the sole active user; circles optional (skip
+`THROUGHLINE_CIRCLES_ROOT`).
 
 **Decision tree (next session):**
 - **Finish orange-testing the full branch** (the redesign + dethreader passed;

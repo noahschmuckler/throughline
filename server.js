@@ -32,9 +32,12 @@ import {
   configureRunner, sweepOnBoot,
 } from './lib/jobs.js';
 import { makeLLMCall, describeLLM } from './shared/llm.js';
-import { getAuthStatus, initiateDeviceCode, signOut, acquireTokenSilentOrNull } from './lib/graph-client.js';
-import { listLoopFiles, loopToMarkdown } from './lib/loop.js';
-import { loopHtmlToMarkdown } from './lib/loop-html.js';
+// NB: the Loop (Deloop) modules — ./lib/graph-client.js (@azure/msal-node) and
+// ./lib/loop-html.js (turndown) — are the ONLY code paths with npm runtime
+// deps. They are loaded LAZILY (see loadGraph/loadLoop/loadLoopHtml below) so
+// the server boots with ZERO npm deps when the (currently shelved) Loop intake
+// isn't exercised. A missing node_modules then only surfaces as a clear 500 on
+// an actual /api/loop/* call, never as a boot crash.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '8787', 10);
@@ -539,6 +542,13 @@ async function handleDethreader(req, res) {
 const LOOP_DEMO = !!process.env.THROUGHLINE_LOOP_DEMO;
 let _loopDemoSignedIn = false;   // demo only: flips true after the demo sign-in, so the wizard path is exercised
 
+// Lazy module loaders (cached). These import the npm-dep-bearing Loop modules
+// only on first /api/loop/* use, keeping the boot path free of node_modules.
+let _graphMod = null, _loopMod = null, _loopHtmlMod = null;
+const loadGraph = async () => (_graphMod ??= await import('./lib/graph-client.js'));
+const loadLoop = async () => (_loopMod ??= await import('./lib/loop.js'));
+const loadLoopHtml = async () => (_loopHtmlMod ??= await import('./lib/loop-html.js'));
+
 function loopDemoList() {
   return [
     { id: 'DEMO001', driveId: 'demo-drive', name: 'Dr. Otto Quarterly Review.loop', created: '2026-04-27T08:00:31Z', modified: '2026-04-27T08:11:29Z', path: '/drive/root:/Atom', webUrl: 'https://loop.cloud.microsoft/p/demo-1', size: 6519 },
@@ -549,6 +559,7 @@ function loopDemoList() {
 async function loopDemoMarkdown(name) {
   try {
     const html = await readFile(join(__dirname, 'test', 'fixtures', 'sample-loop.html'), 'utf8');
+    const { loopHtmlToMarkdown } = await loadLoopHtml();
     return loopHtmlToMarkdown(html, { source: 'onedrive-loop', original_name: name, pulled_at: new Date().toISOString() });
   } catch {
     return `---\nsource: "onedrive-loop"\noriginal_name: ${JSON.stringify(name)}\n---\n# ${name.replace(/\.loop$/i, '')}\n\n(demo) Loop conversion fixture unavailable.\n`;
@@ -558,12 +569,14 @@ async function loopDemoMarkdown(name) {
 async function handleLoopAuthStatus(req, res) {
   if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
   if (LOOP_DEMO) return sendJson(res, 200, { connected: _loopDemoSignedIn, account: _loopDemoSignedIn ? { name: 'Demo User' } : null, last_signin: null, demo: true });
+  const { getAuthStatus } = await loadGraph();
   return sendJson(res, 200, await getAuthStatus());
 }
 
 async function handleLoopAuthSignout(req, res) {
   if (req.method !== 'POST') return sendJson(res, 405, { error: `${req.method} not allowed` });
   if (LOOP_DEMO) { _loopDemoSignedIn = false; return sendJson(res, 200, { ok: true }); }
+  const { signOut } = await loadGraph();
   await signOut();
   return sendJson(res, 200, { ok: true });
 }
@@ -594,6 +607,7 @@ async function handleLoopAuthStart(req, res) {
       res.end();
       return;
     }
+    const { initiateDeviceCode, getAuthStatus } = await loadGraph();
     const handle = await initiateDeviceCode();
     if (!handle.userCode) {
       emit('success', { account: (await getAuthStatus()).account });
@@ -617,9 +631,11 @@ async function handleLoopAuthStart(req, res) {
 async function handleLoopList(req, res) {
   if (req.method !== 'GET') return sendJson(res, 405, { error: `${req.method} not allowed` });
   if (LOOP_DEMO) return _loopDemoSignedIn ? sendJson(res, 200, { loops: loopDemoList() }) : sendJson(res, 401, { error: 'not_authed' });
+  const { acquireTokenSilentOrNull } = await loadGraph();
   const token = await acquireTokenSilentOrNull();
   if (!token) return sendJson(res, 401, { error: 'not_authed' });
   try {
+    const { listLoopFiles } = await loadLoop();
     return sendJson(res, 200, { loops: await listLoopFiles(token) });
   } catch (err) {
     return sendJson(res, 500, { error: err.message });
@@ -632,12 +648,14 @@ async function handleLoopIntake(req, res) {
   try { body = await readBody(req); } catch { return sendJson(res, 400, { error: 'invalid JSON' }); }
   const name = typeof body?.name === 'string' ? body.name : 'Loop note';
   if (LOOP_DEMO) return sendJson(res, 200, { markdown: await loopDemoMarkdown(name), name });
+  const { acquireTokenSilentOrNull } = await loadGraph();
   const token = await acquireTokenSilentOrNull();
   if (!token) return sendJson(res, 401, { error: 'not_authed' });
   const driveId = typeof body?.driveId === 'string' ? body.driveId : '';
   const itemId = typeof body?.itemId === 'string' ? body.itemId : '';
   if (!driveId || !itemId) return sendJson(res, 400, { error: 'driveId and itemId are required' });
   try {
+    const { loopToMarkdown } = await loadLoop();
     const { markdown } = await loopToMarkdown(token, { id: itemId, driveId, name });
     return sendJson(res, 200, { markdown, name });
   } catch (err) {
