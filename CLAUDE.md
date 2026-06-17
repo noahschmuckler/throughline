@@ -96,8 +96,11 @@ the `ThroughlineServer` task to run `node --env-file=.env server.js` IN PLACE
 from the clone; creates `.env` from `.env.example` if absent — reuse the existing
 working `.env` by copying it in first). Update later = Sync + `Stop-ScheduledTask`
 /`Start-ScheduledTask -TaskName ThroughlineServer`. No npm, no zip, no CR-DEV
-pull. Noah is the sole active user; circles optional (skip
-`THROUGHLINE_CIRCLES_ROOT`).
+pull. Noah is the sole active user. **Circles are ON BY DEFAULT (2026-06-17 —
+per Noah's request); federation needs no env var** (it scans the parent of
+ONEDRIVE_ROOT and federates any sibling folder with a `Throughline/state.json`).
+`THROUGHLINE_CIRCLES_ROOT` only OVERRIDES the scan root now; `THROUGHLINE_CIRCLES=off`
+is the opt-out.
 
 **Decision tree (next session):**
 - **Finish orange-testing the full branch** (the redesign + dethreader passed;
@@ -105,9 +108,10 @@ pull. Noah is the sole active user; circles optional (skip
   (fast-forward) → publish chain** (`deploy/publish-throughline.sh` → push
   meridian-briefing → CR DEV `git pull`s) → next v0.2.0+ build. Issues → fix on
   the branch.
-- **To enable circles on orange:** set `THROUGHLINE_CIRCLES_ROOT` in `.env` to
-  the OneDrive top level that holds BOTH shared folders as immediate subfolders.
-  Don't hand-create `state.json` (auto-initialized now). Move UC projects out of
+- **Circles on orange:** now ON BY DEFAULT — no env needed; federation scans the
+  parent of `ONEDRIVE_ROOT`. Set `THROUGHLINE_CIRCLES_ROOT` only if the shared
+  folders live somewhere other than that parent. Don't hand-create `state.json`
+  (auto-initialized now). Move UC projects out of
   Natalia's circle via the Edit-modal **Move to circle** (clears the folder
   binding — files stay put — and program membership).
 - **T41 (Loop TLS)** before re-surfacing the Loop button.
@@ -761,10 +765,13 @@ container/entry/atom with a runtime `_circle` id (+ a `circles[]` list);
 (`shared/merge.js` + machine-local snapshots in `data/circle_snapshots/`) and
 returns the merged doc + conflicts. `_circle` is NEVER persisted (stripped per
 file). `lib/federation.js` is the seam; `lib/store.js` gained
-`readStateAt`/`writeStateAt`. A single-folder install (no
-`THROUGHLINE_CIRCLES_ROOT`) is a one-circle registry → unchanged behavior. The
-**Worker stays single-circle** (no filesystem; `circles[]` absent → front-end
-hides the dropdown). Full design + deferred pieces: `VISION.md` §M3.
+`readStateAt`/`writeStateAt`. **Federation is ON BY DEFAULT (2026-06-17):
+`federationEnabled()` in `lib/circles.js` returns true unless `THROUGHLINE_CIRCLES`
+is off/0/false/no; it scans `circlesRoot()` (= `THROUGHLINE_CIRCLES_ROOT` if set,
+else the parent of `ONEDRIVE_ROOT`).** A box with no sibling circles still gets a
+one-entry (primary) registry → behaves like a single-folder install, so default-on
+is safe. The **Worker stays single-circle** (no filesystem; `circles[]` absent →
+front-end hides the dropdown). Full design + deferred pieces: `VISION.md` §M3.
 
 - **State doc** (KV key `throughline:state`, or the Node JSON file):
   `{ schema_version: 3, containers[], entries[], atoms[], people_meta{} }`.

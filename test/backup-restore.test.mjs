@@ -18,7 +18,7 @@ import { writeBackup, restoreBackup, listBackups } from '../lib/backups.js';
 import { readSnapshot } from '../lib/snapshots.js';
 import { mergeStates } from '../shared/merge.js';
 
-const ENV = ['ONEDRIVE_ROOT', 'THROUGHLINE_DB', 'THROUGHLINE_CIRCLES_ROOT', 'THROUGHLINE_SNAPSHOTS', 'THROUGHLINE_BACKUPS'];
+const ENV = ['ONEDRIVE_ROOT', 'THROUGHLINE_DB', 'THROUGHLINE_CIRCLES_ROOT', 'THROUGHLINE_CIRCLES', 'THROUGHLINE_SNAPSHOTS', 'THROUGHLINE_BACKUPS'];
 
 async function withCircle(run) {
   const saved = Object.fromEntries(ENV.map(k => [k, process.env[k]]));
@@ -33,6 +33,7 @@ async function withCircle(run) {
     }), 'utf8');
 
     delete process.env.THROUGHLINE_CIRCLES_ROOT;          // single-circle install
+    process.env.THROUGHLINE_CIRCLES = 'off';              // federation is on by default now; this test exercises the single-circle path
     process.env.ONEDRIVE_ROOT = join(root, 'circle');
     process.env.THROUGHLINE_DB = statePath;
     process.env.THROUGHLINE_SNAPSHOTS = join(root, '_snap');
