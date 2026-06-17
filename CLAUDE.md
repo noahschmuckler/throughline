@@ -6,18 +6,25 @@ that aren't documented there or in the code — the deploy quirks, branch
 topology at time of writing, and patterns worth knowing before changing
 things.
 
-Snapshot date: 2026-06-09.
+Snapshot date: 2026-06-17.
 
 ## WHERE WE ARE NOW (read this first)
 
-**Branch `findability-focus` has grown WAY past the original sprint 2 — it now
-carries a whole arc of work (2026-06-09 session), pushed, tested-as-it-went on
-orange, NOT yet merged to `main`. Latest commit `16ec778`.** It is **no longer
-front-end-only** (server.js + new deps), so an orange preview is the
-**branch-run** flow (NOT a `public\` copy): `git pull` → `npm ci` (or copy
-`node_modules` — see below) → stop the `ThroughlineServer` task →
-`node --env-file=… server.js` from the checkout. What's on the branch, oldest→
-newest:
+**The `findability-focus` arc is MERGED to `main` (fast-forward) and PUBLISHED as
+v0.3.0 (sha `6290514`, 2026-06-17).** Tests green (129/129); orange-confirmed
+"working very well." The publish chain ran: `deploy/publish-throughline.sh` →
+dropped `throughline-latest.zip` (4.2 MB, now vendoring prod `node_modules`) +
+manifest (v0.3.0) into meridian-briefing `public/throughline/` → committed +
+pushed meridian-briefing `main` (`959e4ad`). **The ONE remaining external step is
+the CR DEV server `git pull`** so it serves the new release; until then the
+update tile still hands out v0.2.0. Once CR DEV pulls, an orange box updates via
+the meridian-briefing tile (reinstalls regardless of version; the installer
+verifies the zip sha256) and a reboot just works — no more branch-run.
+
+`findability-focus` was NOT auto-deleted (left as-is, identical to `main`); per
+the documented workflow it can be deleted local+remote now that it's merged.
+
+What the arc shipped (oldest→newest on the now-merged branch):
 
 1. **Sprint 2 "Findability & Focus" (T33–T36)** — action-spanning dashboard
    search (`matchingActions()` + Overdue/Due≤7d/Not-queued chips + "⚡ Matching
@@ -325,29 +332,28 @@ until he triggers a *processing session* (triage → prioritize → plan a sprin
 clear). The file's header documents the format and workflow. (The larger
 deferred V1+ backlog lives in `BUILDPATH.md` §H.)
 
-## Branch topology (as of 2026-06-09)
+## Branch topology (as of 2026-06-17)
 
-- **`main`** — carries the full collapsed lineage plus **sprint 1 "industrial
-  ingestion" + the 2026-06-08 Phase-0 fixes** (merged fast-forward + published
-  as v0.2.0). Earlier lineage (on 2026-06-07 the historic six-branch stack was
-  merged/deleted local + remote): the demo seeder, the Ad-hoc/Inbox flow, V1
-  (programs, frameworks, wizard, RAG, Node server, cdsapi/anthropic providers,
-  playground reskin, .md import), Epic E1 (folder lens, convert
-  project⇄reference, atom retype), E1.5 (installer + setup wizard +
-  meridian-briefing launcher tile — live on both orange boxes), and the full
-  AI-ingestion epic (v1 consult + v2 decisions-back-in + T13 native gpt-5.4
-  engine + the run-feedback fixes).
+- **`main`** — carries the full collapsed lineage plus the **findability-focus
+  arc** (merged fast-forward + published as **v0.3.0**, sha `6290514`,
+  2026-06-17): sprint 2 (T33–36) + T40 meridian-os shell redesign + T27
+  dethreader + the outcome-prompt fix + Loop import & auth wizard (button
+  shelved, T41) + M3 circles MVP & M1 3-way merge + T38 blank-file fix +
+  cross-circle Move + per-circle backups. Before that: **sprint 1 "industrial
+  ingestion" + the 2026-06-08 Phase-0 fixes** (v0.2.0). Earlier lineage (on
+  2026-06-07 the historic six-branch stack was merged/deleted local + remote):
+  the demo seeder, the Ad-hoc/Inbox flow, V1 (programs, frameworks, wizard, RAG,
+  Node server, cdsapi/anthropic providers, playground reskin, .md import), Epic
+  E1 (folder lens, convert project⇄reference, atom retype), E1.5 (installer +
+  setup wizard + meridian-briefing launcher tile — live on both orange boxes),
+  and the full AI-ingestion epic (v1 consult + v2 decisions-back-in + T13 native
+  gpt-5.4 engine + the run-feedback fixes).
 - **`industrial-ingestion`** — sprint 1's branch; **merged to `main` (fast-
   forward) and DELETED local + remote on 2026-06-08.** Its history lives in `main`.
-- **`findability-focus`** (origin, **the active branch — grew far past sprint
-  2**) — branched off `main`. Now carries sprint 2 (T33–36) **+ the T40
-  meridian-os shell redesign + T27 dethreader + the outcome-prompt fix + Loop
-  import & auth wizard (button shelved, T41) + M3 circles MVP & M1 merge + the
-  T38 blank-file fix + cross-circle Move.** Server-touching + new runtime deps
-  (`@azure/msal-node`, `turndown`) → **branch-run required** to preview (not a
-  `public\` copy). Tested-as-it-went on orange; **NOT merged.** See "WHERE WE
-  ARE NOW" for the full arc + the merge/publish decision tree. On a clean orange
-  pass: fast-forward merge → publish chain → delete the branch.
+- **`findability-focus`** (origin) — branched off `main`; carried the whole
+  v0.3.0 arc. **MERGED to `main` (fast-forward) + published 2026-06-17.** Now
+  identical to `main`; **safe to delete local + remote** (not yet done). Next
+  piece of work = a fresh branch off up-to-date `main`.
 
 **Workflow: every new piece of work gets a NEW branch off up-to-date
 `main`**, merged back after Noah's review. Pushing `main` and feature
