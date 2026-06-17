@@ -1,6 +1,6 @@
 {
   "name": "throughline",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Shared dyad project tracker — projects, dated entries, observations / decisions / actions / outcomes, with a dashboard, people view, and AI-assisted triage. Runs as a Cloudflare Worker (cloud demo) or a local Node server over a OneDrive-backed JSON file (orange-device production).",
