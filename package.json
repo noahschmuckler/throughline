@@ -8,6 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "start": "node server.js",
+    "package": "node scripts/package.mjs",
     "seed": "node scripts/seed.mjs",
     "test": "node --test test/"
   },

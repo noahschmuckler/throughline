@@ -412,6 +412,32 @@ is out. To exercise a click-only surface (triage, import), temporarily
 add a boot-time hook reading a `?…=1` query param, screenshot, then
 remove it (this is how triage + import were verified).
 
+## Deployment — ZIP-DROP is the current path (updated 2026-06-22)
+
+**Noah has moved off BOTH the GitHub-pull run-in-place path AND the
+meridian-briefing publication pipeline.** The current deploy is a **self-contained
+zip** he carries to the orange device by hand:
+
+1. On the dev box: `npm run package` (`scripts/package.mjs`) → bumps the patch
+   version, vendors a prod-only `node_modules`, and writes
+   `dist-package/throughline-<version>.zip` (~4 MB; `dist-package/` is gitignored).
+   `--no-bump` repackages the current version. Modeled on continuum's
+   `scripts/package.mjs` (`~/GitHub_Repos/continuum`).
+2. Move the zip to orange → double-click **`stop.bat`** (releases the file locks
+   on the running install) → **Extract All over** the existing install (preserves
+   `.env` + `data\` — the zip contains neither) → double-click **`start.bat`**.
+3. `start.bat` (`deploy/start.bat`, shipped at the zip root) finds `server.js`,
+   checks Node, seeds `.env` from `.env.example` on first run, opens the browser,
+   and launches `node --env-file=.env server.js` on :8787. `stop.bat` taskkills
+   node. Operator guide: `deploy/README-install.md` (also at the zip root).
+
+The repo is still kept current with GitHub (push `main`/feature branches as
+before), but distribution to orange is the zip, NOT a git pull. **The old
+meridian-briefing pipeline (`deploy/bundle.sh`, `deploy/publish-throughline.sh`,
+`deploy/install-throughline.ps1`) is dormant** — left in the tree for reference
+but no longer the path. `deploy/register-task.ps1` is still live as the OPTIONAL
+auto-start-at-logon step after a zip extract (referenced by README-install.md).
+
 ## Deployment model — there is no cloud deploy anymore (updated 2026-06-06)
 
 **There is no Cloudflare Worker attached to `throughline`.** The git
